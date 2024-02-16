@@ -1,2 +1,4 @@
-# fly-autoscaler
-A metrics-based autoscaler for Fly.io
+Fly Autoscaler
+==============
+
+A metrics-based autoscaler for Fly.io.
