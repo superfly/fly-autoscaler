@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -95,6 +96,7 @@ func (c *ServeCommand) parseFlags(ctx context.Context, args []string) (err error
 	fs.StringVar(&c.Prometheus.Address, "prometheus-address", os.Getenv("FAS_PROMETHEUS_ADDRESS"), "prometheus server address")
 	fs.StringVar(&c.Prometheus.Name, "prometheus-name", os.Getenv("FAS_PROMETHEUS_NAME"), "prometheus metric name")
 	fs.StringVar(&c.Prometheus.Query, "prometheus-query", os.Getenv("FAS_PROMETHEUS_QUERY"), "prometheus scalar query")
+	verbose := fs.Bool("verbose", false, "verbose logging")
 	fs.Usage = func() {
 		fmt.Println(`
 The serve command runs the autoscaler server process and begins managing a fleet
@@ -114,6 +116,13 @@ Arguments:
 	} else if fs.NArg() > 0 {
 		return fmt.Errorf("too many arguments")
 	}
+
+	// Initialize logging.
+	hopt := &slog.HandlerOptions{Level: slog.LevelInfo}
+	if *verbose {
+		hopt.Level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, hopt)))
 
 	return nil
 }

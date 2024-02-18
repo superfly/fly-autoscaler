@@ -151,8 +151,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	sort.Slice(stopped, func(i, j int) bool { return stopped[i].ID < stopped[j].ID })
 
 	// Attempt to start as many machines as needed.
-	var newlyStartedN int
+	remaining := diff
 	for _, machine := range stopped {
+		if remaining <= 0 {
+			break
+		}
+
 		_, err := r.client.Start(ctx, machine.ID, "")
 		if err != nil {
 			slog.Error("cannot start machine, skipping",
@@ -162,9 +166,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 
 		slog.Info("machine started", slog.String("id", machine.ID))
-		newlyStartedN++
+		remaining--
 	}
 
+	newlyStartedN := diff - remaining
 	slog.Info("scale up completed", slog.Int("n", newlyStartedN))
 
 	return nil
