@@ -127,7 +127,7 @@ func TestReconciler_MachineN(t *testing.T) {
 	})
 }
 
-func TestReconciler_Reconcile(t *testing.T) {
+func TestReconciler_Scale(t *testing.T) {
 	// Ensure that if the target count and started count are the same, there
 	// will not be any new machines started.
 	t.Run("NoScale", func(t *testing.T) {

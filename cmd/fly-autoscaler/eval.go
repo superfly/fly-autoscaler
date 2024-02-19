@@ -4,29 +4,20 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
-	"os"
-	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	fas "github.com/superfly/fly-autoscaler"
 	fasprom "github.com/superfly/fly-autoscaler/prometheus"
-	"github.com/superfly/fly-go/flaps"
 )
 
-// ServeCommand represents a command run the autoscaler server process.
-type ServeCommand struct {
-	reconciler *fas.Reconciler
-
+// EvalCommand represents a command to collect metrics and evaluate machine count.
+// This is use as a test command when setting up or debugging the autoscaler.
+type EvalCommand struct {
 	// Target Fly.io organization & application name.
 	OrgName string
 	AppName string
 
 	// Target machine count expression.
 	Expr string
-
-	// Reconciliation interval.
-	Interval time.Duration
 
 	// Prometheus settings.
 	Prometheus struct {
@@ -37,18 +28,11 @@ type ServeCommand struct {
 	}
 }
 
-func NewServeCommand() *ServeCommand {
-	return &ServeCommand{}
+func NewEvalCommand() *EvalCommand {
+	return &EvalCommand{}
 }
 
-func (c *ServeCommand) Close() (err error) {
-	if c.reconciler != nil {
-		c.reconciler.Stop()
-	}
-	return nil
-}
-
-func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
+func (c *EvalCommand) Run(ctx context.Context, args []string) (err error) {
 	if err := c.parseFlags(ctx, args); err != nil {
 		return err
 	}
@@ -69,12 +53,6 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 		return fmt.Errorf("prometheus query required")
 	}
 
-	// Instantiate client to scale up machines.
-	client, err := flaps.NewWithOptions(ctx, flaps.NewClientOpts{AppName: c.AppName})
-	if err != nil {
-		return fmt.Errorf("cannot create flaps client: %w", err)
-	}
-
 	// Instantiate prometheus collector.
 	collector, err := fasprom.NewMetricCollector(
 		c.Prometheus.MetricName,
@@ -86,36 +64,39 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 		return fmt.Errorf("cannot create prometheus client: %w", err)
 	}
 
-	// Instantiate and start reconcilation.
-	r := fas.NewReconciler(client)
+	// Instantiate reconciler and evaluate once.
+	r := fas.NewReconciler(nil)
 	r.Expr = c.Expr
-	r.Interval = c.Interval
 	r.Collectors = []fas.MetricCollector{collector}
-	r.RegisterPromMetrics(prometheus.DefaultRegisterer)
-	c.reconciler = r
 
-	r.Start()
+	if err := r.CollectMetrics(ctx); err != nil {
+		return fmt.Errorf("metrics collection failed: %w", err)
+	}
+
+	targetN, err := r.MachineN()
+	if err != nil {
+		return fmt.Errorf("cannot calculate machine count: %w", err)
+	}
+	fmt.Println(targetN)
 
 	return nil
 }
 
-func (c *ServeCommand) parseFlags(ctx context.Context, args []string) (err error) {
+func (c *EvalCommand) parseFlags(ctx context.Context, args []string) (err error) {
 	fs := flag.NewFlagSet("fly-autoscaler-serve", flag.ContinueOnError)
 	registerOrgNameFlag(fs, &c.OrgName)
 	registerAppNameFlag(fs, &c.AppName)
 	registerPrometheusFlags(fs, &c.Prometheus.Address, &c.Prometheus.MetricName,
 		&c.Prometheus.Query, &c.Prometheus.Token)
 	registerExprFlag(fs, &c.Expr)
-	fs.DurationVar(&c.Interval, "interval", fas.DefaultReconcilerInterval, "Reconciliation interval")
-	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fs.Usage = func() {
 		fmt.Println(`
-The serve command runs the autoscaler server process and begins managing a fleet
-of Fly machines based on metrics.
+The eval command runs collects metrics once and evaluates the given expression.
+No scaling is performed. This command should be used for testing & debugging.
 
 Usage:
 
-	fly-autoscaler serve [arguments]
+	fly-autoscaler eval [arguments]
 
 Arguments:
 `[1:])
@@ -127,13 +108,6 @@ Arguments:
 	} else if fs.NArg() > 0 {
 		return fmt.Errorf("too many arguments")
 	}
-
-	// Initialize logging.
-	hopt := &slog.HandlerOptions{Level: slog.LevelInfo}
-	if *verbose {
-		hopt.Level = slog.LevelDebug
-	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, hopt)))
 
 	return nil
 }

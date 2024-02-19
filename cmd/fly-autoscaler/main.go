@@ -32,6 +32,9 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	switch cmd {
+	case "eval":
+		return NewEvalCommand().Run(ctx, args)
+
 	case "serve":
 		cmd := NewServeCommand()
 		if err := cmd.Run(ctx, args); err != nil {
@@ -79,7 +82,48 @@ Usage:
 
 The commands are:
 
+	eval         collects metrics once and evaluates server count
 	serve        runs the autoscaler server process
 	version      prints the version
 `[1:])
+}
+
+func registerOrgNameFlag(fs *flag.FlagSet, appName *string) {
+	defaultValue := os.Getenv("FLY_ORG")
+	if defaultValue == "" {
+		defaultValue = os.Getenv("FLY_ORG_NAME")
+	}
+	if defaultValue == "" {
+		defaultValue = os.Getenv("FAS_ORG_NAME")
+	}
+
+	fs.StringVar(appName, "org", defaultValue, "Fly.io organization name.")
+}
+
+func registerAppNameFlag(fs *flag.FlagSet, appName *string) {
+	defaultValue := os.Getenv("FLY_APP")
+	if defaultValue == "" {
+		defaultValue = os.Getenv("FLY_APP_NAME")
+	}
+	if defaultValue == "" {
+		defaultValue = os.Getenv("FAS_APP_NAME")
+	}
+
+	fs.StringVar(appName, "app", defaultValue, "Fly.io app name.")
+}
+
+func registerPrometheusFlags(fs *flag.FlagSet, addr, metricName, query, token *string) {
+	defaultToken := os.Getenv("FLY_ACCESS_TOKEN")
+	if defaultToken == "" {
+		defaultToken = os.Getenv("FAS_PROMETHEUS_TOKEN")
+	}
+
+	fs.StringVar(addr, "prometheus.address", os.Getenv("FAS_PROMETHEUS_ADDRESS"), "Prometheus server address.")
+	fs.StringVar(metricName, "prometheus.metric-name", os.Getenv("FAS_PROMETHEUS_METRIC_NAME"), "Prometheus metric name.")
+	fs.StringVar(query, "prometheus.query", os.Getenv("FAS_PROMETHEUS_QUERY"), "PromQL query.")
+	fs.StringVar(token, "prometheus.token", defaultToken, "Prometheus auth token.")
+}
+
+func registerExprFlag(fs *flag.FlagSet, expr *string) {
+	fs.StringVar(expr, "expr", os.Getenv("FAS_EXPR"), "Expression to calculate target machine count.")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -21,17 +22,18 @@ type MetricCollector struct {
 	api   v1.API
 }
 
-func NewMetricCollector(name, address, query string) (*MetricCollector, error) {
-	client, err := api.NewClient(api.Config{
+func NewMetricCollector(name, address, query, token string) (*MetricCollector, error) {
+	client, err := newHTTPClient(api.Config{
 		Address: address,
-	})
+	}, token)
 	if err != nil {
 		return nil, err
 	}
 
 	return &MetricCollector{
-		name: name,
-		api:  v1.NewAPI(client),
+		name:  name,
+		query: query,
+		api:   v1.NewAPI(client),
 	}, nil
 }
 
@@ -63,4 +65,26 @@ func (c *MetricCollector) CollectMetric(ctx context.Context) (float64, error) {
 	default:
 		return 0, fmt.Errorf("unexpected prometheus result type: %T", result)
 	}
+}
+
+type httpClient struct {
+	api.Client
+	token string
+}
+
+func newHTTPClient(cfg api.Config, token string) (api.Client, error) {
+	c, err := api.NewClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &httpClient{Client: c, token: token}, nil
+}
+
+func (c *httpClient) Do(ctx context.Context, req *http.Request) (*http.Response, []byte, error) {
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	// req.Write(os.Stderr)
+
+	return c.Client.Do(ctx, req)
 }

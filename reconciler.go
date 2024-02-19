@@ -79,21 +79,13 @@ LOOP:
 		case <-r.ctx.Done():
 			return
 		case <-ticker.C:
-			// Collect all the metrics first.
-			for _, c := range r.Collectors {
-				value, err := c.CollectMetric(r.ctx)
-				if err != nil {
-					slog.Error("cannot collect metric",
-						slog.String("name", c.Name()),
-						slog.Any("err", err))
-					continue LOOP
-				}
-				r.SetValue(c.Name(), value)
+			if err := r.CollectMetrics(r.ctx); err != nil {
+				slog.Error("metrics collection failed", slog.Any("err", err))
+				continue LOOP
 			}
 
-			// Compute the target machine count and scale up if needed.
 			if err := r.Reconcile(r.ctx); err != nil {
-				slog.Error("cannot reconcile", slog.Any("err", err))
+				slog.Error("reconciliation failed", slog.Any("err", err))
 				continue LOOP
 			}
 		}
@@ -109,6 +101,18 @@ func (r *Reconciler) Value(name string) (float64, bool) {
 // SetValue sets the value of a named metric.
 func (r *Reconciler) SetValue(name string, value float64) {
 	r.metrics[name] = value
+}
+
+// CollectMetrics fetches metrics from all collectors.
+func (r *Reconciler) CollectMetrics(ctx context.Context) error {
+	for _, c := range r.Collectors {
+		value, err := c.CollectMetric(r.ctx)
+		if err != nil {
+			return fmt.Errorf("collect metric (%q): %w", c.Name(), err)
+		}
+		r.SetValue(c.Name(), value)
+	}
+	return nil
 }
 
 // Reconcile scales the number of machines up, if needed. Machines should shut
