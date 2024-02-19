@@ -201,10 +201,7 @@ func (r *Reconciler) startMachine(ctx context.Context, id string) error {
 
 // MachineN returns the number of machines to scale to based on Expr.
 func (r *Reconciler) MachineN() (int, error) {
-	env := map[string]any{
-		"min": minFloat64,
-		"max": maxFloat64,
-	}
+	env := map[string]any{}
 	for k, v := range r.metrics {
 		env[k] = v
 	}
@@ -282,20 +279,6 @@ func (r *Reconciler) registerReconcileCount(reg prometheus.Registerer) {
 		},
 		func() float64 { return float64(r.Stats.NoScale.Load()) },
 	))
-}
-
-func minFloat64(x, y float64) float64 {
-	if x < y {
-		return x
-	}
-	return y
-}
-
-func maxFloat64(x, y float64) float64 {
-	if x > y {
-		return x
-	}
-	return y
 }
 
 func machinesByState(a []*fly.Machine) map[string][]*fly.Machine {
