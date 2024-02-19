@@ -8,9 +8,11 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/expr-lang/expr"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/superfly/fly-go"
 )
 
@@ -34,6 +36,15 @@ type Reconciler struct {
 
 	// List of collectors to fetch metric values from.
 	Collectors []MetricCollector
+
+	// Must also be registered in RegisterPromMetrics() for visibility.
+	Stats struct {
+		MachineStarted     atomic.Int64
+		MachineStartFailed atomic.Int64
+		ScaleUp            atomic.Int64
+		ScaleDown          atomic.Int64
+		NoScale            atomic.Int64
+	}
 }
 
 func NewReconciler(client FlyClient) *Reconciler {
@@ -120,12 +131,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	// nothing to do so we can exit.
 	startedN := len(m[fly.MachineStateStarted])
 	if startedN == targetN {
+		r.Stats.NoScale.Add(1)
 		return nil
 	}
 
 	// If we have more started machines than we need, the machines need to
 	// shut themselves down if they have no activity. The scaler won't scale down.
 	if startedN > targetN {
+		r.Stats.ScaleDown.Add(1)
+
 		slog.Debug("started machine count exceeds target, waiting for machines to shut down",
 			slog.Int("started", startedN),
 			slog.Int("target", targetN))
@@ -157,8 +171,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			break
 		}
 
-		_, err := r.client.Start(ctx, machine.ID, "")
-		if err != nil {
+		if err := r.startMachine(ctx, machine.ID); err != nil {
 			slog.Error("cannot start machine, skipping",
 				slog.String("id", machine.ID),
 				slog.Any("err", err))
@@ -172,6 +185,17 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	newlyStartedN := diff - remaining
 	slog.Info("scale up completed", slog.Int("n", newlyStartedN))
 
+	r.Stats.ScaleUp.Add(1)
+
+	return nil
+}
+
+func (r *Reconciler) startMachine(ctx context.Context, id string) error {
+	if _, err := r.client.Start(ctx, id, ""); err != nil {
+		r.Stats.MachineStartFailed.Add(1)
+		return err
+	}
+	r.Stats.MachineStarted.Add(1)
 	return nil
 }
 
@@ -201,7 +225,63 @@ func (r *Reconciler) MachineN() (int, error) {
 	} else if math.IsInf(f, 0) {
 		return 0, ErrExprInf
 	}
+
+	if f < 0 {
+		return 0, nil
+	}
 	return int(f), nil
+}
+
+func (r *Reconciler) RegisterPromMetrics(reg prometheus.Registerer) {
+	r.registerMachineStartCount(reg)
+	r.registerReconcileCount(reg)
+}
+
+func (r *Reconciler) registerMachineStartCount(reg prometheus.Registerer) {
+	const name = "fas_machine_start_count"
+
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: prometheus.Labels{"status": "started"},
+		},
+		func() float64 { return float64(r.Stats.MachineStarted.Load()) },
+	))
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        "fas_machine_start_count",
+			ConstLabels: prometheus.Labels{"status": "failed"},
+		},
+		func() float64 { return float64(r.Stats.MachineStartFailed.Load()) },
+	))
+}
+
+func (r *Reconciler) registerReconcileCount(reg prometheus.Registerer) {
+	const name = "fas_reconcile_count"
+
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: prometheus.Labels{"status": "scale_up"},
+		},
+		func() float64 { return float64(r.Stats.ScaleUp.Load()) },
+	))
+
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: prometheus.Labels{"status": "scale_down"},
+		},
+		func() float64 { return float64(r.Stats.ScaleDown.Load()) },
+	))
+
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: prometheus.Labels{"status": "no_scale"},
+		},
+		func() float64 { return float64(r.Stats.NoScale.Load()) },
+	))
 }
 
 func minFloat64(x, y float64) float64 {

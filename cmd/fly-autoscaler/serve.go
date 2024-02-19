@@ -8,8 +8,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	fas "github.com/superfly/fly-autoscaler"
-	"github.com/superfly/fly-autoscaler/prometheus"
+	fasprom "github.com/superfly/fly-autoscaler/prometheus"
 	"github.com/superfly/fly-go/flaps"
 )
 
@@ -71,7 +72,7 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	}
 
 	// Instantiate prometheus collector.
-	collector, err := prometheus.NewMetricCollector(
+	collector, err := fasprom.NewMetricCollector(
 		c.Prometheus.Name,
 		c.Prometheus.Address,
 		c.Prometheus.Query,
@@ -85,6 +86,10 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	r.Expr = c.Expr
 	r.Interval = c.Interval
 	r.Collectors = []fas.MetricCollector{collector}
+	r.RegisterPromMetrics(prometheus.DefaultRegisterer)
+	c.reconciler = r
+
+	r.Start()
 
 	return nil
 }

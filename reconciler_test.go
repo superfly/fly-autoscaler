@@ -2,10 +2,16 @@ package fas_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"math"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	fas "github.com/superfly/fly-autoscaler"
 	"github.com/superfly/fly-autoscaler/mock"
 	"github.com/superfly/fly-go"
@@ -36,6 +42,91 @@ func TestReconciler_Value(t *testing.T) {
 	})
 }
 
+func TestReconciler_MachineN(t *testing.T) {
+	t.Run("Constant", func(t *testing.T) {
+		r := fas.NewReconciler(nil)
+		r.Expr = "1"
+		if v, err := r.MachineN(); err != nil {
+			t.Fatal(err)
+		} else if got, want := v, 1; got != want {
+			t.Fatalf("MachineN=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("Round", func(t *testing.T) {
+		r := fas.NewReconciler(nil)
+		r.Expr = "2.6"
+		if v, err := r.MachineN(); err != nil {
+			t.Fatal(err)
+		} else if got, want := v, 3; got != want {
+			t.Fatalf("MachineN=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("Var", func(t *testing.T) {
+		r := fas.NewReconciler(nil)
+		r.Expr = "x + y + 2"
+		r.SetValue("x", 4)
+		r.SetValue("y", 7)
+		if v, err := r.MachineN(); err != nil {
+			t.Fatal(err)
+		} else if got, want := v, 13; got != want {
+			t.Fatalf("MachineN=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("Min", func(t *testing.T) {
+		r := fas.NewReconciler(nil)
+		r.Expr = "min(x, y)"
+		r.SetValue("x", 4)
+		r.SetValue("y", 7)
+		if v, err := r.MachineN(); err != nil {
+			t.Fatal(err)
+		} else if got, want := v, 4; got != want {
+			t.Fatalf("MachineN=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("Max", func(t *testing.T) {
+		r := fas.NewReconciler(nil)
+		r.Expr = "max(x, y)"
+		r.SetValue("x", 4)
+		r.SetValue("y", 7)
+		if v, err := r.MachineN(); err != nil {
+			t.Fatal(err)
+		} else if got, want := v, 7; got != want {
+			t.Fatalf("MachineN=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("Neg", func(t *testing.T) {
+		r := fas.NewReconciler(nil)
+		r.Expr = "-2"
+		if v, err := r.MachineN(); err != nil {
+			t.Fatal(err)
+		} else if got, want := v, 0; got != want {
+			t.Fatalf("MachineN=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("NaN", func(t *testing.T) {
+		r := fas.NewReconciler(nil)
+		r.Expr = "x + 1"
+		r.SetValue("x", math.NaN())
+		if _, err := r.MachineN(); err == nil || err != fas.ErrExprNaN {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("Inf", func(t *testing.T) {
+		r := fas.NewReconciler(nil)
+		r.Expr = "1 / 0"
+		if _, err := r.MachineN(); err == nil || err != fas.ErrExprInf {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestReconciler_Reconcile(t *testing.T) {
 	// Ensure that if the target count and started count are the same, there
 	// will not be any new machines started.
@@ -56,12 +147,14 @@ func TestReconciler_Reconcile(t *testing.T) {
 		r.Expr = "1"
 		if err := r.Reconcile(context.Background()); err != nil {
 			t.Fatal(err)
+		} else if got, want := r.Stats.NoScale.Load(), int64(1); got != want {
+			t.Fatalf("NoScale=%v, want %v", got, want)
 		}
 	})
 
 	// Ensure that number of machines will be scaled up to match target number.
 	t.Run("ScaleUp", func(t *testing.T) {
-		var startN int
+		var invokeStartN int
 		var client mock.FlyClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
@@ -74,7 +167,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 		client.StartFunc = func(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error) {
 			switch id {
 			case "2", "3":
-				startN++
+				invokeStartN++
 			default:
 				t.Fatalf("unexpected start id: %v", id)
 			}
@@ -86,21 +179,197 @@ func TestReconciler_Reconcile(t *testing.T) {
 		r.SetValue("foo", 1.0)
 		if err := r.Reconcile(context.Background()); err != nil {
 			t.Fatal(err)
-		} else if got, want := startN, 2; got != want {
+		} else if got, want := invokeStartN, 2; got != want {
 			t.Fatalf("startN=%v, want %v", got, want)
+		} else if got, want := r.Stats.ScaleUp.Load(), int64(1); got != want {
+			t.Fatalf("ScaleUp=%v, want %v", got, want)
+		} else if got, want := r.Stats.MachineStarted.Load(), int64(2); got != want {
+			t.Fatalf("MachineStarted=%v, want %v", got, want)
+		} else if got, want := r.Stats.MachineStartFailed.Load(), int64(0); got != want {
+			t.Fatalf("MachineStartFailed=%v, want %v", got, want)
+		}
+	})
+
+	// Ensure that the reconciler will keep trying to start machines if one fails.
+	t.Run("StartFailed", func(t *testing.T) {
+		var invokeStartN int
+		var client mock.FlyClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{ID: "1", State: fly.MachineStateStopped},
+				{ID: "2", State: fly.MachineStateStopped},
+				{ID: "3", State: fly.MachineStateStopped},
+				{ID: "4", State: fly.MachineStateStopped},
+			}, nil
+		}
+		client.StartFunc = func(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error) {
+			invokeStartN++
+			switch id {
+			case "1", "3":
+				// ok
+			case "2":
+				return nil, fmt.Errorf("marker")
+			default:
+				t.Fatalf("unexpected start id: %v", id)
+			}
+			return &fly.MachineStartResponse{}, nil
+		}
+
+		r := fas.NewReconciler(&client)
+		r.Expr = "2"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		} else if got, want := invokeStartN, 3; got != want {
+			t.Fatalf("startN=%v, want %v", got, want)
+		} else if got, want := r.Stats.ScaleUp.Load(), int64(1); got != want {
+			t.Fatalf("ScaleUp=%v, want %v", got, want)
+		} else if got, want := r.Stats.MachineStarted.Load(), int64(2); got != want {
+			t.Fatalf("MachineStarted=%v, want %v", got, want)
+		} else if got, want := r.Stats.MachineStartFailed.Load(), int64(1); got != want {
+			t.Fatalf("MachineStartFailed=%v, want %v", got, want)
+		}
+	})
+
+	// The reconciler does not scale down but it should log and update stats.
+	t.Run("NotifyScaleDown", func(t *testing.T) {
+		var client mock.FlyClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{ID: "1", State: fly.MachineStateStarted},
+				{ID: "2", State: fly.MachineStateStarted},
+				{ID: "3", State: fly.MachineStateStarted},
+				{ID: "4", State: fly.MachineStateStopped},
+			}, nil
+		}
+
+		r := fas.NewReconciler(&client)
+		r.Expr = "1"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		} else if got, want := r.Stats.ScaleDown.Load(), int64(1); got != want {
+			t.Fatalf("ScaleDown=%v, want %v", got, want)
 		}
 	})
 }
 
-/*
+// Ensure prometheus registration does not blow up.
+func TestReconciler_RegisterPromMetrics(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	fas.NewReconciler(nil).RegisterPromMetrics(reg)
+	if _, err := reg.Gather(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Ensure that server can collect metrics and run reconcilation on a loop.
 func TestReconciler_StartStop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode enabled, skipping")
+	}
+
+	var mu sync.Mutex
+	machines := []*fly.Machine{
+		{ID: "1", State: fly.MachineStateStopped},
+		{ID: "2", State: fly.MachineStateStopped},
+		{ID: "3", State: fly.MachineStateStopped},
+		{ID: "4", State: fly.MachineStateStopped},
+	}
+
+	machinesByID := make(map[string]*fly.Machine)
+	for _, m := range machines {
+		machinesByID[m.ID] = m
+	}
+
+	// Client operates on the in-memory list of machines above.
 	var client mock.FlyClient
-	collector := mock.NewMetricCollector("foo")
+	client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return machines, nil
+	}
+	client.StartFunc = func(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		m := machinesByID[id]
+		if m.State != fly.MachineStateStopped {
+			return nil, fmt.Errorf("unexpected state: %q", m.State)
+		}
+
+		m.State = fly.MachineStateStarted
+		return &fly.MachineStartResponse{}, nil
+	}
+
+	// Collector will simply mirror the target value.
+	var target atomic.Int64
+	collector := mock.NewMetricCollector("target")
+	collector.CollectMetricFunc = func(ctx context.Context) (float64, error) {
+		return float64(target.Load()), nil
+	}
 
 	r := fas.NewReconciler(&client)
-	r.Expr = "foo + 1"
+	r.Interval = 100 * time.Millisecond
+	r.Expr = "target"
 	r.Collectors = []fas.MetricCollector{collector}
+	r.Start()
+	defer r.Stop()
 
-	if v, err :=
+	waitInterval := 5 * r.Interval
+
+	// Ensure no machines are started.
+	time.Sleep(waitInterval)
+	if got, want := machineCountByState(machines, fly.MachineStateStarted), 0; got != want {
+		t.Fatalf("started=%v, want %v", got, want)
+	}
+
+	t.Log("Increase target count...")
+	target.Store(2)
+	time.Sleep(waitInterval)
+	if got, want := machineCountByState(machines, fly.MachineStateStarted), 2; got != want {
+		t.Fatalf("started=%v, want %v", got, want)
+	}
+
+	t.Log("Increase target count to max...")
+	target.Store(4)
+	time.Sleep(waitInterval)
+	if got, want := machineCountByState(machines, fly.MachineStateStarted), 4; got != want {
+		t.Fatalf("started=%v, want %v", got, want)
+	}
+
+	t.Log("Exceed total machine count...")
+	target.Store(10)
+	time.Sleep(waitInterval)
+	if got, want := machineCountByState(machines, fly.MachineStateStarted), 4; got != want {
+		t.Fatalf("started=%v, want %v", got, want)
+	}
+
+	t.Log("Downscale to zero...")
+	target.Store(0)
+	time.Sleep(waitInterval)
+	if got, want := machineCountByState(machines, fly.MachineStateStarted), 4; got != want {
+		t.Fatalf("started=%v, want %v", got, want)
+	}
+
+	// Stop machines and check.
+	t.Log("Stopping machines...")
+	mu.Lock()
+	for _, m := range machines {
+		m.State = fly.MachineStateStopped
+	}
+	mu.Unlock()
+	time.Sleep(waitInterval)
+	if got, want := machineCountByState(machines, fly.MachineStateStarted), 0; got != want {
+		t.Fatalf("started=%v, want %v", got, want)
+	}
+
+	t.Log("Test complete")
 }
-*/
+
+func machineCountByState(a []*fly.Machine, state string) (n int) {
+	for _, m := range a {
+		if m.State == state {
+			n++
+		}
+	}
+	return n
+}
