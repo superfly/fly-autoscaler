@@ -73,8 +73,11 @@ func VersionString() string {
 func printUsage() {
 	fmt.Println(`
 fly-autoscaler is a metrics-based autoscaler for automatically scaling your
-Fly Machines up or down. It continuously monitors external metrics to derive
-the appropriate number of machines to run to handle the load.
+Fly Machines up. It continuously monitors external metrics to derive the
+appropriate number of machines to run to handle the load.
+
+To scale down, your Fly Machines should shut themselves down after some period
+of inactivity.
 
 Usage:
 

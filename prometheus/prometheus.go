@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/api"
@@ -81,10 +82,11 @@ func newHTTPClient(cfg api.Config, token string) (api.Client, error) {
 }
 
 func (c *httpClient) Do(ctx context.Context, req *http.Request) (*http.Response, []byte, error) {
-	if c.token != "" {
+	if strings.HasPrefix(c.token, "Fly") { // macaroons
+		req.Header.Set("Authorization", c.token)
+	} else if c.token != "" { // auth token
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	// req.Write(os.Stderr)
 
 	return c.Client.Do(ctx, req)
 }
