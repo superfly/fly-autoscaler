@@ -13,7 +13,6 @@ import (
 // This is use as a test command when setting up or debugging the autoscaler.
 type EvalCommand struct {
 	// Target Fly.io organization & application name.
-	OrgName string
 	AppName string
 
 	// Target machine count expression.
@@ -36,9 +35,7 @@ func (c *EvalCommand) Run(ctx context.Context, args []string) (err error) {
 	if err := c.parseFlags(ctx, args); err != nil {
 		return err
 	}
-	if c.OrgName == "" {
-		return fmt.Errorf("org name required")
-	} else if c.AppName == "" {
+	if c.AppName == "" {
 		return fmt.Errorf("app name required")
 	}
 	if c.Expr == "" {
@@ -84,7 +81,6 @@ func (c *EvalCommand) Run(ctx context.Context, args []string) (err error) {
 
 func (c *EvalCommand) parseFlags(ctx context.Context, args []string) (err error) {
 	fs := flag.NewFlagSet("fly-autoscaler-serve", flag.ContinueOnError)
-	registerOrgNameFlag(fs, &c.OrgName)
 	registerAppNameFlag(fs, &c.AppName)
 	registerPrometheusFlags(fs, &c.Prometheus.Address, &c.Prometheus.MetricName,
 		&c.Prometheus.Query, &c.Prometheus.Token)

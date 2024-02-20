@@ -91,18 +91,6 @@ The commands are:
 `[1:])
 }
 
-func registerOrgNameFlag(fs *flag.FlagSet, appName *string) {
-	defaultValue := os.Getenv("FLY_ORG")
-	if defaultValue == "" {
-		defaultValue = os.Getenv("FLY_ORG_NAME")
-	}
-	if defaultValue == "" {
-		defaultValue = os.Getenv("FAS_ORG_NAME")
-	}
-
-	fs.StringVar(appName, "org", defaultValue, "Fly.io organization name.")
-}
-
 func registerAppNameFlag(fs *flag.FlagSet, appName *string) {
 	defaultValue := os.Getenv("FLY_APP")
 	if defaultValue == "" {
