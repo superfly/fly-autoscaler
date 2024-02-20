@@ -7,3 +7,4 @@ RUN go build -ldflags "-s -w -X 'main.Version=${FAS_VERSION}' -X 'main.Commit=${
 FROM alpine
 COPY --from=builder /usr/local/bin/fly-autoscaler /usr/local/bin/fly-autoscaler
 ENTRYPOINT fly-autoscaler
+CMD ["serve"]
