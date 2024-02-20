@@ -132,6 +132,7 @@ func NewConfigFromEnv() (*Config, error) {
 
 	if addr := os.Getenv("FAS_PROMETHEUS_ADDRESS"); addr != "" {
 		c.MetricCollectors = append(c.MetricCollectors, &MetricCollectorConfig{
+			Type:       "prometheus",
 			Address:    addr,
 			MetricName: os.Getenv("FAS_PROMETHEUS_METRIC_NAME"),
 			Query:      os.Getenv("FAS_PROMETHEUS_QUERY"),
