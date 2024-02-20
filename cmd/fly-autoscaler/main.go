@@ -1,13 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
+	"time"
+
+	fas "github.com/superfly/fly-autoscaler"
+	fasprom "github.com/superfly/fly-autoscaler/prometheus"
+	"github.com/superfly/fly-go/flaps"
+	"gopkg.in/yaml.v3"
 )
 
 // Build information.
@@ -91,30 +99,154 @@ The commands are:
 `[1:])
 }
 
-func registerAppNameFlag(fs *flag.FlagSet, appName *string) {
-	defaultValue := os.Getenv("FLY_APP")
-	if defaultValue == "" {
-		defaultValue = os.Getenv("FLY_APP_NAME")
-	}
-	if defaultValue == "" {
-		defaultValue = os.Getenv("FAS_APP_NAME")
-	}
-
-	fs.StringVar(appName, "app", defaultValue, "Fly.io app name.")
+func registerConfigPathFlag(fs *flag.FlagSet) *string {
+	return fs.String("config", "", "Path to config file")
 }
 
-func registerPrometheusFlags(fs *flag.FlagSet, addr, metricName, query, token *string) {
-	defaultToken := os.Getenv("FLY_ACCESS_TOKEN")
-	if defaultToken == "" {
-		defaultToken = os.Getenv("FAS_PROMETHEUS_TOKEN")
-	}
+type Config struct {
+	AppName  string        `yaml:"app-name"`
+	Expr     string        `yaml:"expr"`
+	Interval time.Duration `yaml:"interval"`
+	Verbose  bool          `yaml:"verbose"`
 
-	fs.StringVar(addr, "prometheus.address", os.Getenv("FAS_PROMETHEUS_ADDRESS"), "Prometheus server address.")
-	fs.StringVar(metricName, "prometheus.metric-name", os.Getenv("FAS_PROMETHEUS_METRIC_NAME"), "Prometheus metric name.")
-	fs.StringVar(query, "prometheus.query", os.Getenv("FAS_PROMETHEUS_QUERY"), "PromQL query.")
-	fs.StringVar(token, "prometheus.token", defaultToken, "Prometheus auth token.")
+	MetricCollectors []*MetricCollectorConfig `yaml:"metric-collectors"`
 }
 
-func registerExprFlag(fs *flag.FlagSet, expr *string) {
-	fs.StringVar(expr, "expr", os.Getenv("FAS_EXPR"), "Expression to calculate target machine count.")
+func NewConfig() *Config {
+	return &Config{
+		Interval: fas.DefaultReconcilerInterval,
+	}
+}
+
+func NewConfigFromEnv() (*Config, error) {
+	c := NewConfig()
+	c.AppName = os.Getenv("FAS_APP_NAME")
+	c.Expr = os.Getenv("FAS_EXPR")
+	if s := os.Getenv("FAS_INTERVAL"); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse FAS_INTERVAL as duration: %q", s)
+		}
+		c.Interval = d
+	}
+
+	if addr := os.Getenv("FAS_PROMETHEUS_ADDRESS"); addr != "" {
+		c.MetricCollectors = append(c.MetricCollectors, &MetricCollectorConfig{
+			Address:    addr,
+			MetricName: os.Getenv("FAS_PROMETHEUS_METRIC_NAME"),
+			Query:      os.Getenv("FAS_PROMETHEUS_QUERY"),
+			Token:      os.Getenv("FAS_PROMETHEUS_TOKEN"),
+		})
+	}
+
+	return c, nil
+}
+
+func (c *Config) Validate() error {
+	if c.AppName == "" {
+		return fmt.Errorf("app name required")
+	}
+	if c.Expr == "" {
+		return fmt.Errorf("expression required")
+	}
+
+	for i, collectorConfig := range c.MetricCollectors {
+		if err := collectorConfig.Validate(); err != nil {
+			return fmt.Errorf("metric-collectors[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func (c *Config) NewFlapsClient(ctx context.Context) (*flaps.Client, error) {
+	return flaps.NewWithOptions(ctx, flaps.NewClientOpts{
+		AppName: c.AppName,
+	})
+}
+
+func (c *Config) NewMetricCollectors() ([]fas.MetricCollector, error) {
+	var a []fas.MetricCollector
+	for i, collectorConfig := range c.MetricCollectors {
+		collector, err := collectorConfig.NewMetricCollector()
+		if err != nil {
+			return nil, fmt.Errorf("metric collector[%d]: %w", i, err)
+		}
+		a = append(a, collector)
+	}
+	return a, nil
+}
+
+func ParseConfig(r io.Reader, config *Config) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+
+	data = []byte(os.ExpandEnv(string(data)))
+
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	return dec.Decode(&config)
+}
+
+func ParseConfigFromFile(filename string, config *Config) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return ParseConfig(f, config)
+}
+
+type MetricCollectorConfig struct {
+	Type       string `yaml:"type"`
+	MetricName string `yaml:"metric-name"`
+
+	// Prometheus fields
+	Address string `yaml:"address"`
+	Query   string `yaml:"query"`
+	Token   string `yaml:"token"`
+}
+
+func (c *MetricCollectorConfig) Validate() error {
+	if c.MetricName == "" {
+		return fmt.Errorf("metric name required")
+	}
+
+	switch typ := c.Type; typ {
+	case "prometheus":
+		return c.validatePrometheus()
+	case "":
+		return fmt.Errorf("type required")
+	default:
+		return fmt.Errorf("invalid type: %q", typ)
+	}
+}
+
+func (c *MetricCollectorConfig) validatePrometheus() error {
+	if c.Address == "" {
+		return fmt.Errorf("prometheus address required")
+	}
+	if c.Query == "" {
+		return fmt.Errorf("prometheus query required")
+	}
+	return nil
+}
+
+func (c *MetricCollectorConfig) NewMetricCollector() (fas.MetricCollector, error) {
+	switch typ := c.Type; typ {
+	case "prometheus":
+		return c.newPrometheusMetricCollector()
+	default:
+		return nil, fmt.Errorf("invalid type: %q", typ)
+	}
+}
+
+func (c *MetricCollectorConfig) newPrometheusMetricCollector() (*fasprom.MetricCollector, error) {
+	return fasprom.NewMetricCollector(
+		c.MetricName,
+		c.Address,
+		c.Query,
+		c.Token,
+	)
 }
