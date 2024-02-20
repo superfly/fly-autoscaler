@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	fas "github.com/superfly/fly-autoscaler"
 )
 
@@ -41,12 +43,14 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	if err != nil {
 		return fmt.Errorf("cannot create flaps client: %w", err)
 	}
+	slog.Info("connected to flaps", slog.String("app_name", c.Config.AppName))
 
 	// Instantiate prometheus collector.
 	collectors, err := c.Config.NewMetricCollectors()
 	if err != nil {
 		return fmt.Errorf("cannot create metrics collectors: %w", err)
 	}
+	slog.Info("metrics collectors initialized", slog.Int("n", len(collectors)))
 
 	// Instantiate and start reconcilation.
 	r := fas.NewReconciler(client)
@@ -56,9 +60,21 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	r.RegisterPromMetrics(prometheus.DefaultRegisterer)
 	c.reconciler = r
 
+	slog.Info("beginning reconciliation loop")
 	r.Start()
 
+	go c.serveMetricsServer(ctx)
+
 	return nil
+}
+
+func (c *ServeCommand) serveMetricsServer(ctx context.Context) {
+	addr := ":9090"
+	slog.Info("serving metrics", slog.String("addr", addr))
+	http.Handle("/metrics", promhttp.Handler())
+	if err := http.ListenAndServe(addr, nil); err != nil && ctx.Err() == nil {
+		slog.Error("cannot serve metrics", slog.Any("err", err))
+	}
 }
 
 func (c *ServeCommand) parseFlags(ctx context.Context, args []string) (err error) {
