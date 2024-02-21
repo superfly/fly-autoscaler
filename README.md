@@ -1,9 +1,9 @@
 Fly Autoscaler
 ==============
 
-A metrics-based autoscaler for Fly.io. The autoscaler supports polling for
-metrics from a Prometheus instance and then computing the number of machines
-based on those metrics.
+The project is a metrics-based autoscaler for Fly.io. The autoscaler supports
+polling for metrics from a Prometheus instance and then computing the number of
+machines based on those metrics.
 
 ## How it works
 
@@ -63,35 +63,77 @@ machines available for a Fly app.
 
 ## Usage
 
+### Create an app for your autoscaler
+
+First, create an app for your autoscaler:
+
+```sh
+$ fly apps create my-autoscaler
+```
+
+Then create a `fly.toml` for the deployment. Update the `TARGET_APP_NAME` with
+the name of the app that you want to scale and update `MY_ORG` to the
+organization where your Prometheus metrics live.
+
+```toml
+app = "my-autoscaler"
+
+[build]
+image = "flyio/fly-autoscaler:0.1"
+
+[env]
+FAS_APP_NAME = "TARGET_APP_NAME"
+FAS_EXPR = "ceil(queue_depth / 10)"
+FAS_PROMETHEUS_ADDRESS = "https://api.fly.io/prometheus/MY_ORG"
+FAS_PROMETHEUS_METRIC_NAME = "queue_depth"
+FAS_PROMETHEUS_QUERY = "sum(queue_depth)"
+
+[metrics]
+port = 9090
+path = "/metrics"
+```
+
+
 ### Create a deploy token
 
-First, set up a new deploy token for your application so that the autoscaler
-and fetch metrics and start machines with it:
+Next, set up a new deploy token for the application you want to scale:
 
 ```sh
-$ fly tokens create deploy -a MYAPP -n "fly-autoscaler"
+$ fly tokens create deploy -a TARGET_APP_NAME
 ```
 
-You can use this token by exporting it to an environment variable:
+Set the token as a secret on your application:
 
 ```
-$ export FLY_ACCESS_TOKEN="FlyV1 ..."
+$ fly secrets set FAS_API_TOKEN="FlyV1 ..."
 ```
 
-### Running the server
 
-To run the autoscaler as a server process, use the `serve` command. For example,
-this will ensure that there are always 5 instances running at a time:
+### Create a read-only token
+
+Create a token for reading your Prometheus data:
 
 ```sh
-$ fly-autoscaler serve \
-  -org MYORG \
-  -app MYAPP \
-  -prometheus.address "https://api.fly.io/prometheus/MYORG"
-  -prometheus.query "sum(fly_instance_up{app='MYAPP'})" \
-  -prometheus.metric-name instance_up
-  -expr "max(instance_up, 5)"
+$ fly tokens create readonly
 ```
+
+Set the token as a secret on your application:
+
+```
+$ fly secrets set FAS_PROMETHEUS_TOKEN="FlyV1 ..."
+```
+
+### Deploy the server
+
+Finally, deploy your autoscaler application:
+
+```sh
+$ fly deploy
+```
+
+This should create a new machine and start it with the `fly-autoscaler` server
+running.
+
 
 ### Testing your metrics & expression
 
@@ -101,11 +143,22 @@ perform any scaling of Fly Machines. It will only print the evaluated expression
 based on current metrics numbers.
 
 ```sh
-$ fly-autoscaler eval \
-  -org MYORG \
-  -app MYAPP \
-  -prometheus.address "https://api.fly.io/prometheus/MYORG"
-  -prometheus.query "sum(fly_instance_up{app='MYAPP'})" \
-  -prometheus.metric-name instance_up
-  -expr "max(instance_up, 5)"
+$ fly-autoscaler eval
 ```
+
+You can change the evaluated expression by setting the `FAS_EXPR` environment
+variable:
+
+```sh
+$ FAS_EXPR=queue_depth fly-autoscaler eval
+```
+
+## Configuration
+
+You can also configure `fly-autoscaler` with a YAML config file if you don't
+want to use environment variables or if you want to configure more than one
+metric collector.
+
+Please see the reference [fly-autoscaler.yml][] for more details.
+
+[fly-autoscaler.yml]: ./cmd/fly-autoscaler/testdata/fly-autoscaler.yml
