@@ -15,6 +15,7 @@ import (
 	fas "github.com/superfly/fly-autoscaler"
 	fasprom "github.com/superfly/fly-autoscaler/prometheus"
 	"github.com/superfly/fly-go/flaps"
+	"github.com/superfly/fly-go/tokens"
 	"gopkg.in/yaml.v3"
 )
 
@@ -107,6 +108,7 @@ type Config struct {
 	AppName  string        `yaml:"app-name"`
 	Expr     string        `yaml:"expr"`
 	Interval time.Duration `yaml:"interval"`
+	APIToken string        `yaml:"api-token"`
 	Verbose  bool          `yaml:"verbose"`
 
 	MetricCollectors []*MetricCollectorConfig `yaml:"metric-collectors"`
@@ -122,6 +124,8 @@ func NewConfigFromEnv() (*Config, error) {
 	c := NewConfig()
 	c.AppName = os.Getenv("FAS_APP_NAME")
 	c.Expr = os.Getenv("FAS_EXPR")
+	c.APIToken = os.Getenv("FAS_API_TOKEN")
+
 	if s := os.Getenv("FAS_INTERVAL"); s != "" {
 		d, err := time.ParseDuration(s)
 		if err != nil {
@@ -160,8 +164,13 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) NewFlapsClient(ctx context.Context) (*flaps.Client, error) {
+	if c.APIToken == "" {
+		return nil, fmt.Errorf("api token required")
+	}
+
 	return flaps.NewWithOptions(ctx, flaps.NewClientOpts{
 		AppName: c.AppName,
+		Tokens:  tokens.Parse(c.APIToken),
 	})
 }
 
