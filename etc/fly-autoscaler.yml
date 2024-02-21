@@ -1,0 +1,29 @@
+# The name of the target app that you want to scale.
+app-name: "TARGET_APP_NAME"
+
+# An expression to calculate the number of machines of the target app that
+# should be in a "started" state. Should return a number which will be rounded.
+# 
+# This uses the Expr language to define expressions: https://expr-lang.org/
+expr: "ceil(queue_depth / 10)"
+
+# The frequency that the reconciliation loop will be run.
+interval: "15s"
+
+# A Fly.io auth token that has permission to start machines for the target app.
+# This is typically set via the FAS_API_TOKEN environment variable.
+api-token: "FlyV1 ..."
+
+# If true, enables verbose debugging logging.
+verbose: false
+
+# Metric collectors fetch the current metrics when a reconciliation is performed.
+#
+# They store the current value locally with a given metric name so that the
+# expression can be used to calculate the machine count.
+metric-collectors:
+  - type: "prometheus"
+    metric-name: "queue_depth"
+    address: "https://api.fly.io/prometheus/MY_ORG"
+    query: "sum(queue_depth)"
+    token: "FlyV1 ..."
