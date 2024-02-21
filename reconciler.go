@@ -70,24 +70,30 @@ func (r *Reconciler) Stop() {
 }
 
 func (r *Reconciler) loop() {
+	errReconciliationTimeout := fmt.Errorf("reconciliation timeout")
+
 	ticker := time.NewTicker(r.Interval)
 	defer ticker.Stop()
 
-LOOP:
 	for {
 		select {
 		case <-r.ctx.Done():
 			return
 		case <-ticker.C:
-			if err := r.CollectMetrics(r.ctx); err != nil {
-				slog.Error("metrics collection failed", slog.Any("err", err))
-				continue LOOP
-			}
+			func() {
+				ctx, cancel := context.WithTimeoutCause(r.ctx, r.Interval, errReconciliationTimeout)
+				defer cancel()
 
-			if err := r.Reconcile(r.ctx); err != nil {
-				slog.Error("reconciliation failed", slog.Any("err", err))
-				continue LOOP
-			}
+				if err := r.CollectMetrics(ctx); err != nil {
+					slog.Error("metrics collection failed", slog.Any("err", err))
+					return
+				}
+
+				if err := r.Reconcile(ctx); err != nil {
+					slog.Error("reconciliation failed", slog.Any("err", err))
+					return
+				}
+			}()
 		}
 	}
 }
