@@ -161,4 +161,4 @@ metric collector.
 
 Please see the reference [fly-autoscaler.yml][] for more details.
 
-[fly-autoscaler.yml]: ./cmd/fly-autoscaler/testdata/fly-autoscaler.yml
+[fly-autoscaler.yml]: ./etc/fly-autoscaler.yml
