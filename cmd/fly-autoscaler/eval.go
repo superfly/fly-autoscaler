@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 
@@ -33,18 +34,27 @@ func (c *EvalCommand) Run(ctx context.Context, args []string) (err error) {
 
 	// Instantiate reconciler and evaluate once.
 	r := fas.NewReconciler(nil)
-	r.Expr = c.Config.Expr
+	r.MinStartedMachineN = c.Config.GetMinStartedMachineN()
+	r.MaxStartedMachineN = c.Config.GetMaxStartedMachineN()
 	r.Collectors = collectors
 
 	if err := r.CollectMetrics(ctx); err != nil {
 		return fmt.Errorf("metrics collection failed: %w", err)
 	}
 
-	targetN, err := r.MachineN()
-	if err != nil {
-		return fmt.Errorf("cannot calculate machine count: %w", err)
+	var out evalOutput
+	if out.Started.Min, err = r.CalcMinStartedMachineN(); err != nil {
+		return fmt.Errorf("cannot calculate min machine count: %w", err)
 	}
-	fmt.Println(targetN)
+	if out.Started.Max, err = r.CalcMaxStartedMachineN(); err != nil {
+		return fmt.Errorf("cannot calculate max machine count: %w", err)
+	}
+
+	buf, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(buf))
 
 	return nil
 }
@@ -82,4 +92,11 @@ Arguments:
 	}
 
 	return nil
+}
+
+type evalOutput struct {
+	Started struct {
+		Min int `json:"min"`
+		Max int `json:"max"`
+	} `json:"started"`
 }

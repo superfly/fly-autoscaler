@@ -16,8 +16,8 @@ func TestConfig_Parse(t *testing.T) {
 	if got, want := config.AppName, "TARGET_APP_NAME"; got != want {
 		t.Fatalf("AppName=%v, want %v", got, want)
 	}
-	if got, want := config.Expr, "ceil(queue_depth / 10)"; got != want {
-		t.Fatalf("Expr=%v, want %v", got, want)
+	if got, want := config.StartedMachineN, "ceil(queue_depth / 10)"; got != want {
+		t.Fatalf("StartedMachineN=%v, want %v", got, want)
 	}
 	if got, want := config.Interval, 15*time.Second; got != want {
 		t.Fatalf("Interval=%v, want %v", got, want)

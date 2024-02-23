@@ -105,11 +105,13 @@ func registerConfigPathFlag(fs *flag.FlagSet) *string {
 }
 
 type Config struct {
-	AppName  string        `yaml:"app-name"`
-	Expr     string        `yaml:"expr"`
-	Interval time.Duration `yaml:"interval"`
-	APIToken string        `yaml:"api-token"`
-	Verbose  bool          `yaml:"verbose"`
+	AppName            string        `yaml:"app-name"`
+	StartedMachineN    string        `yaml:"started-machine-count"`
+	MinStartedMachineN string        `yaml:"min-started-machine-count"`
+	MaxStartedMachineN string        `yaml:"max-started-machine-count"`
+	Interval           time.Duration `yaml:"interval"`
+	APIToken           string        `yaml:"api-token"`
+	Verbose            bool          `yaml:"verbose"`
 
 	MetricCollectors []*MetricCollectorConfig `yaml:"metric-collectors"`
 }
@@ -123,7 +125,9 @@ func NewConfig() *Config {
 func NewConfigFromEnv() (*Config, error) {
 	c := NewConfig()
 	c.AppName = os.Getenv("FAS_APP_NAME")
-	c.Expr = os.Getenv("FAS_EXPR")
+	c.StartedMachineN = os.Getenv("FAS_STARTED_MACHINE_COUNT")
+	c.MinStartedMachineN = os.Getenv("FAS_MIN_STARTED_MACHINE_COUNT")
+	c.MaxStartedMachineN = os.Getenv("FAS_MAX_STARTED_MACHINE_COUNT")
 	c.APIToken = os.Getenv("FAS_API_TOKEN")
 
 	if s := os.Getenv("FAS_INTERVAL"); s != "" {
@@ -147,12 +151,37 @@ func NewConfigFromEnv() (*Config, error) {
 	return c, nil
 }
 
+func (c *Config) GetMinStartedMachineN() string {
+	if v := c.StartedMachineN; v != "" {
+		return v
+	}
+	return c.MinStartedMachineN
+}
+
+func (c *Config) GetMaxStartedMachineN() string {
+	if v := c.StartedMachineN; v != "" {
+		return v
+	}
+	return c.MaxStartedMachineN
+}
+
 func (c *Config) Validate() error {
 	if c.AppName == "" {
 		return fmt.Errorf("app name required")
 	}
-	if c.Expr == "" {
-		return fmt.Errorf("expression required")
+
+	// Ensure either a single machine count is defined or a range.
+	if c.StartedMachineN != "" && (c.MinStartedMachineN != "" || c.MaxStartedMachineN != "") {
+		return fmt.Errorf("cannot define started machine count and min/max started machine count")
+	}
+	if c.StartedMachineN == "" && c.MinStartedMachineN == "" && c.MaxStartedMachineN == "" {
+		return fmt.Errorf("started machine count required")
+	}
+	if c.MinStartedMachineN != "" && c.MaxStartedMachineN == "" {
+		return fmt.Errorf("max started machine count required if min started machine count is defined")
+	}
+	if c.MinStartedMachineN == "" && c.MaxStartedMachineN != "" {
+		return fmt.Errorf("min started machine count required if max started machine count is defined")
 	}
 
 	for i, collectorConfig := range c.MetricCollectors {
