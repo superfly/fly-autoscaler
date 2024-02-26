@@ -112,11 +112,18 @@ Arguments:
 	}
 
 	// Initialize logging.
-	hopt := &slog.HandlerOptions{Level: slog.LevelInfo}
+	hopt := &slog.HandlerOptions{Level: slog.LevelInfo, ReplaceAttr: removeSlogTime}
 	if c.Config.Verbose {
 		hopt.Level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, hopt)))
 
 	return nil
+}
+
+func removeSlogTime(groups []string, a slog.Attr) slog.Attr {
+	if a.Key == slog.TimeKey && len(groups) == 0 {
+		return slog.Attr{}
+	}
+	return a
 }
