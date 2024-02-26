@@ -79,7 +79,7 @@ organization where your Prometheus metrics live.
 app = "my-autoscaler"
 
 [build]
-image = "flyio/fly-autoscaler:0.1"
+image = "flyio/fly-autoscaler:0.2"
 
 [env]
 FAS_APP_NAME = "TARGET_APP_NAME"
