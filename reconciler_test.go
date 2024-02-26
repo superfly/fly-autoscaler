@@ -42,86 +42,86 @@ func TestReconciler_Value(t *testing.T) {
 	})
 }
 
-func TestReconciler_MachineN(t *testing.T) {
+func TestReconciler_MinStartedMachineN(t *testing.T) {
 	t.Run("Constant", func(t *testing.T) {
 		r := fas.NewReconciler(nil)
-		r.Expr = "1"
-		if v, err := r.MachineN(); err != nil {
+		r.MinStartedMachineN = "1"
+		if v, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
 		} else if got, want := v, 1; got != want {
-			t.Fatalf("MachineN=%v, want %v", got, want)
+			t.Fatalf("MinStartedMachineN=%v, want %v", got, want)
 		}
 	})
 
 	t.Run("Round", func(t *testing.T) {
 		r := fas.NewReconciler(nil)
-		r.Expr = "2.6"
-		if v, err := r.MachineN(); err != nil {
+		r.MinStartedMachineN = "2.6"
+		if v, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
 		} else if got, want := v, 3; got != want {
-			t.Fatalf("MachineN=%v, want %v", got, want)
+			t.Fatalf("MinStartedMachineN=%v, want %v", got, want)
 		}
 	})
 
 	t.Run("Var", func(t *testing.T) {
 		r := fas.NewReconciler(nil)
-		r.Expr = "x + y + 2"
+		r.MinStartedMachineN = "x + y + 2"
 		r.SetValue("x", 4)
 		r.SetValue("y", 7)
-		if v, err := r.MachineN(); err != nil {
+		if v, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
 		} else if got, want := v, 13; got != want {
-			t.Fatalf("MachineN=%v, want %v", got, want)
+			t.Fatalf("MinStartedMachineN=%v, want %v", got, want)
 		}
 	})
 
 	t.Run("Min", func(t *testing.T) {
 		r := fas.NewReconciler(nil)
-		r.Expr = "min(x, y)"
+		r.MinStartedMachineN = "min(x, y)"
 		r.SetValue("x", 4)
 		r.SetValue("y", 7)
-		if v, err := r.MachineN(); err != nil {
+		if v, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
 		} else if got, want := v, 4; got != want {
-			t.Fatalf("MachineN=%v, want %v", got, want)
+			t.Fatalf("MinStartedMachineN=%v, want %v", got, want)
 		}
 	})
 
 	t.Run("Max", func(t *testing.T) {
 		r := fas.NewReconciler(nil)
-		r.Expr = "max(x, y)"
+		r.MinStartedMachineN = "max(x, y)"
 		r.SetValue("x", 4)
 		r.SetValue("y", 7)
-		if v, err := r.MachineN(); err != nil {
+		if v, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
 		} else if got, want := v, 7; got != want {
-			t.Fatalf("MachineN=%v, want %v", got, want)
+			t.Fatalf("MinStartedMachineN=%v, want %v", got, want)
 		}
 	})
 
 	t.Run("Neg", func(t *testing.T) {
 		r := fas.NewReconciler(nil)
-		r.Expr = "-2"
-		if v, err := r.MachineN(); err != nil {
+		r.MinStartedMachineN = "-2"
+		if v, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
 		} else if got, want := v, 0; got != want {
-			t.Fatalf("MachineN=%v, want %v", got, want)
+			t.Fatalf("MinStartedMachineN=%v, want %v", got, want)
 		}
 	})
 
 	t.Run("NaN", func(t *testing.T) {
 		r := fas.NewReconciler(nil)
-		r.Expr = "x + 1"
+		r.MinStartedMachineN = "x + 1"
 		r.SetValue("x", math.NaN())
-		if _, err := r.MachineN(); err == nil || err != fas.ErrExprNaN {
+		if _, err := r.CalcMinStartedMachineN(); err == nil || err != fas.ErrExprNaN {
 			t.Fatal(err)
 		}
 	})
 
 	t.Run("Inf", func(t *testing.T) {
 		r := fas.NewReconciler(nil)
-		r.Expr = "1 / 0"
-		if _, err := r.MachineN(); err == nil || err != fas.ErrExprInf {
+		r.MinStartedMachineN = "1 / 0"
+		if _, err := r.CalcMinStartedMachineN(); err == nil || err != fas.ErrExprInf {
 			t.Fatal(err)
 		}
 	})
@@ -144,7 +144,8 @@ func TestReconciler_Scale(t *testing.T) {
 		}
 
 		r := fas.NewReconciler(&client)
-		r.Expr = "1"
+		r.MinStartedMachineN = "1"
+		r.MaxStartedMachineN = "2"
 		if err := r.Reconcile(context.Background()); err != nil {
 			t.Fatal(err)
 		} else if got, want := r.Stats.NoScale.Load(), int64(1); got != want {
@@ -175,7 +176,8 @@ func TestReconciler_Scale(t *testing.T) {
 		}
 
 		r := fas.NewReconciler(&client)
-		r.Expr = "foo + 2"
+		r.MinStartedMachineN = "foo + 2"
+		r.MaxStartedMachineN = r.MinStartedMachineN
 		r.SetValue("foo", 1.0)
 		if err := r.Reconcile(context.Background()); err != nil {
 			t.Fatal(err)
@@ -216,7 +218,8 @@ func TestReconciler_Scale(t *testing.T) {
 		}
 
 		r := fas.NewReconciler(&client)
-		r.Expr = "2"
+		r.MinStartedMachineN = "2"
+		r.MaxStartedMachineN = r.MinStartedMachineN
 		if err := r.Reconcile(context.Background()); err != nil {
 			t.Fatal(err)
 		} else if got, want := invokeStartN, 3; got != want {
@@ -230,8 +233,8 @@ func TestReconciler_Scale(t *testing.T) {
 		}
 	})
 
-	// The reconciler does not scale down but it should log and update stats.
-	t.Run("NotifyScaleDown", func(t *testing.T) {
+	// The reconciler should stop machines when they are above the max count.
+	t.Run("ScaleDown", func(t *testing.T) {
 		var client mock.FlyClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
@@ -241,13 +244,59 @@ func TestReconciler_Scale(t *testing.T) {
 				{ID: "4", State: fly.MachineStateStopped},
 			}, nil
 		}
+		client.StopFunc = func(ctx context.Context, in fly.StopMachineInput, nonce string) error {
+			switch in.ID {
+			case "1", "2":
+				// ok
+			default:
+				t.Fatalf("unexpected start id: %v", in.ID)
+			}
+			return nil
+		}
 
 		r := fas.NewReconciler(&client)
-		r.Expr = "1"
+		r.MinStartedMachineN = "1"
+		r.MaxStartedMachineN = "1"
 		if err := r.Reconcile(context.Background()); err != nil {
 			t.Fatal(err)
 		} else if got, want := r.Stats.ScaleDown.Load(), int64(1); got != want {
 			t.Fatalf("ScaleDown=%v, want %v", got, want)
+		} else if got, want := r.Stats.MachineStopped.Load(), int64(2); got != want {
+			t.Fatalf("MachineStopped=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("StopFailed", func(t *testing.T) {
+		var client mock.FlyClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{ID: "1", State: fly.MachineStateStarted},
+				{ID: "2", State: fly.MachineStateStarted},
+				{ID: "3", State: fly.MachineStateStarted},
+				{ID: "4", State: fly.MachineStateStopped},
+			}, nil
+		}
+		client.StopFunc = func(ctx context.Context, in fly.StopMachineInput, nonce string) error {
+			switch in.ID {
+			case "1", "3":
+				// ok
+			case "2":
+				return fmt.Errorf("marker")
+			default:
+				t.Fatalf("unexpected start id: %v", in.ID)
+			}
+			return nil
+		}
+
+		r := fas.NewReconciler(&client)
+		r.MinStartedMachineN = "1"
+		r.MaxStartedMachineN = "1"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		} else if got, want := r.Stats.MachineStopped.Load(), int64(2); got != want {
+			t.Fatalf("MachineStopped=%v, want %v", got, want)
+		} else if got, want := r.Stats.MachineStopFailed.Load(), int64(1); got != want {
+			t.Fatalf("MachineStopFailed=%v, want %v", got, want)
 		}
 	})
 }
@@ -299,6 +348,18 @@ func TestReconciler_StartStop(t *testing.T) {
 		m.State = fly.MachineStateStarted
 		return &fly.MachineStartResponse{}, nil
 	}
+	client.StopFunc = func(ctx context.Context, in fly.StopMachineInput, nonce string) error {
+		mu.Lock()
+		defer mu.Unlock()
+
+		m := machinesByID[in.ID]
+		if m.State != fly.MachineStateStarted {
+			return fmt.Errorf("unexpected state: %q", m.State)
+		}
+
+		m.State = fly.MachineStateStopped
+		return nil
+	}
 
 	// Collector will simply mirror the target value.
 	var target atomic.Int64
@@ -309,7 +370,8 @@ func TestReconciler_StartStop(t *testing.T) {
 
 	r := fas.NewReconciler(&client)
 	r.Interval = 100 * time.Millisecond
-	r.Expr = "target"
+	r.MinStartedMachineN = "target"
+	r.MaxStartedMachineN = r.MinStartedMachineN
 	r.Collectors = []fas.MetricCollector{collector}
 	r.Start()
 	defer r.Stop()
@@ -345,18 +407,6 @@ func TestReconciler_StartStop(t *testing.T) {
 
 	t.Log("Downscale to zero...")
 	target.Store(0)
-	time.Sleep(waitInterval)
-	if got, want := machineCountByState(machines, fly.MachineStateStarted), 4; got != want {
-		t.Fatalf("started=%v, want %v", got, want)
-	}
-
-	// Stop machines and check.
-	t.Log("Stopping machines...")
-	mu.Lock()
-	for _, m := range machines {
-		m.State = fly.MachineStateStopped
-	}
-	mu.Unlock()
 	time.Sleep(waitInterval)
 	if got, want := machineCountByState(machines, fly.MachineStateStarted), 0; got != want {
 		t.Fatalf("started=%v, want %v", got, want)

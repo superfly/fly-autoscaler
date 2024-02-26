@@ -1,11 +1,14 @@
 # The name of the target app that you want to scale.
 app-name: "TARGET_APP_NAME"
 
-# An expression to calculate the number of machines of the target app that
-# should be in a "started" state. Should return a number which will be rounded.
-# 
-# This uses the Expr language to define expressions: https://expr-lang.org/
-expr: "ceil(queue_depth / 10)"
+# This expression determines the number of machines to maintain in a "started"
+# state after each reconciliation. If the number of started machines is less
+# existing machines will be started. If the number of started machines is more
+# then running machines will be stopped.
+#
+# You can also define separate minimum & maximum thresholds using the
+# "min_started_machine_count" & "max_started_machine_count" fields.
+started-machine-count: "ceil(queue_depth / 10)"
 
 # The frequency that the reconciliation loop will be run.
 interval: "15s"

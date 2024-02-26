@@ -55,7 +55,8 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 
 	// Instantiate and start reconcilation.
 	r := fas.NewReconciler(client)
-	r.Expr = c.Config.Expr
+	r.MinStartedMachineN = c.Config.GetMinStartedMachineN()
+	r.MaxStartedMachineN = c.Config.GetMaxStartedMachineN()
 	r.Interval = c.Config.Interval
 	r.Collectors = collectors
 	r.RegisterPromMetrics(prometheus.DefaultRegisterer)

@@ -83,7 +83,7 @@ image = "flyio/fly-autoscaler:0.1"
 
 [env]
 FAS_APP_NAME = "TARGET_APP_NAME"
-FAS_EXPR = "ceil(queue_depth / 10)"
+FAS_STARTED_MACHINE_COUNT = "ceil(queue_depth / 10)"
 FAS_PROMETHEUS_ADDRESS = "https://api.fly.io/prometheus/MY_ORG"
 FAS_PROMETHEUS_METRIC_NAME = "queue_depth"
 FAS_PROMETHEUS_QUERY = "sum(queue_depth)"
@@ -146,11 +146,10 @@ based on current metrics numbers.
 $ fly-autoscaler eval
 ```
 
-You can change the evaluated expression by setting the `FAS_EXPR` environment
-variable:
+You can change the evaluated expression by setting an environment variable:
 
 ```sh
-$ FAS_EXPR=queue_depth fly-autoscaler eval
+$ FAS_STARTED_MACHINE_COUNT=queue_depth fly-autoscaler eval
 ```
 
 ## Configuration

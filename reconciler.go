@@ -16,10 +16,13 @@ import (
 	"github.com/superfly/fly-go"
 )
 
+// Reconciler defaults.
 const (
 	DefaultReconcilerInterval = 15 * time.Second
 )
 
+// Reconciler represents the central part of the autoscaler that stores metrics,
+// computes the number of necessary machines, and performs scaling.
 type Reconciler struct {
 	client  FlyClient
 	metrics map[string]float64
@@ -31,19 +34,25 @@ type Reconciler struct {
 	// The frequency to run the reconciliation loop.
 	Interval time.Duration
 
-	// Expression used for calculating the number of machines to scale to.
-	Expr string
+	// Expression used for calculating the
+	MinStartedMachineN string
+	MaxStartedMachineN string
 
 	// List of collectors to fetch metric values from.
 	Collectors []MetricCollector
 
 	// Must also be registered in RegisterPromMetrics() for visibility.
 	Stats struct {
+		// Outcomes, incremented for each reconciliation.
+		ScaleUp   atomic.Int64
+		ScaleDown atomic.Int64
+		NoScale   atomic.Int64
+
+		// Individual machine stats.
 		MachineStarted     atomic.Int64
 		MachineStartFailed atomic.Int64
-		ScaleUp            atomic.Int64
-		ScaleDown          atomic.Int64
-		NoScale            atomic.Int64
+		MachineStopped     atomic.Int64
+		MachineStopFailed  atomic.Int64
 	}
 }
 
@@ -125,9 +134,13 @@ func (r *Reconciler) CollectMetrics(ctx context.Context) error {
 // themselves down to scale down. Returns the number of started machines, if any.
 func (r *Reconciler) Reconcile(ctx context.Context) error {
 	// Compute number of machines based on expr & metrics
-	targetN, err := r.MachineN()
+	minStartedN, err := r.CalcMinStartedMachineN()
 	if err != nil {
-		return fmt.Errorf("compute target machine count: %w", err)
+		return fmt.Errorf("compute minimum started machine count: %w", err)
+	}
+	maxStartedN, err := r.CalcMaxStartedMachineN()
+	if err != nil {
+		return fmt.Errorf("compute minimum started machine count: %w", err)
 	}
 
 	// Fetch list of running machines.
@@ -137,46 +150,80 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	}
 	m := machinesByState(machines)
 
-	// If the current machine count equals our target machine count then we have
-	// nothing to do so we can exit.
+	// Log out stats so we know exactly what the state of the world is.
+	slog.Info("reconciling",
+		slog.Group("current",
+			slog.Int("started", len(m[fly.MachineStateStarted])),
+			slog.Int("stopped", len(m[fly.MachineStateStopped])),
+		),
+		slog.Group("target",
+			slog.Group("started",
+				slog.Int("min", minStartedN),
+				slog.Int("max", maxStartedN),
+			),
+		),
+	)
+
+	// Determine if we need to scale up or down.
 	startedN := len(m[fly.MachineStateStarted])
-	if startedN == targetN {
-		r.Stats.NoScale.Add(1)
-		return nil
+	if startedN > maxStartedN {
+		return r.scaleDown(ctx, m[fly.MachineStateStarted], startedN-maxStartedN)
+	} else if startedN < minStartedN {
+		return r.scaleUp(ctx, m[fly.MachineStateStopped], minStartedN-startedN)
 	}
 
-	// If we have more started machines than we need, the machines need to
-	// shut themselves down if they have no activity. The scaler won't scale down.
-	if startedN > targetN {
-		r.Stats.ScaleDown.Add(1)
+	r.Stats.NoScale.Add(1)
+	return nil
+}
 
-		slog.Debug("started machine count exceeds target, waiting for machines to shut down",
-			slog.Int("started", startedN),
-			slog.Int("target", targetN))
-		return nil
+func (r *Reconciler) scaleDown(ctx context.Context, startedMachines []*fly.Machine, n int) error {
+	r.Stats.ScaleDown.Add(1)
+
+	slog.Info("begin scale down")
+
+	// Sort stopped machines by an arbitrary value (ID) so results are deterministic.
+	sort.Slice(startedMachines, func(i, j int) bool { return startedMachines[i].ID < startedMachines[j].ID })
+
+	// Attempt to stop as many machines as needed.
+	remaining := n
+	for _, machine := range startedMachines {
+		if remaining <= 0 {
+			break
+		}
+
+		if err := r.stopMachine(ctx, machine.ID); err != nil {
+			slog.Error("cannot stop machine, skipping",
+				slog.String("id", machine.ID),
+				slog.Any("err", err))
+			continue
+		}
+
+		slog.Info("machine stopped", slog.String("id", machine.ID))
+		remaining--
 	}
 
-	slog.Info("begin scale up",
-		slog.Int("started", startedN),
-		slog.Int("target", targetN))
+	newlyStoppedN := n - remaining
+	slog.Info("scale down completed", slog.Int("n", newlyStoppedN))
+
+	return nil
+}
+
+func (r *Reconciler) scaleUp(ctx context.Context, stoppedMachines []*fly.Machine, n int) error {
+	r.Stats.ScaleUp.Add(1)
+
+	slog.Info("begin scale up")
 
 	// Let the user know if we don't have enough machines to reach the target count.
-	diff := targetN - startedN
-	stoppedN := len(m[fly.MachineStateStopped])
-	if stoppedN < diff {
-		slog.Warn("not enough stopped machines available to reach target, please create more machines",
-			slog.Int("started", startedN),
-			slog.Int("stopped", stoppedN),
-			slog.Int("target", targetN))
+	if len(stoppedMachines) < n {
+		slog.Warn("not enough stopped machines available to reach target, please create more machines")
 	}
 
 	// Sort stopped machines by an arbitrary value (ID) so results are deterministic.
-	stopped := m[fly.MachineStateStopped]
-	sort.Slice(stopped, func(i, j int) bool { return stopped[i].ID < stopped[j].ID })
+	sort.Slice(stoppedMachines, func(i, j int) bool { return stoppedMachines[i].ID < stoppedMachines[j].ID })
 
 	// Attempt to start as many machines as needed.
-	remaining := diff
-	for _, machine := range stopped {
+	remaining := n
+	for _, machine := range stoppedMachines {
 		if remaining <= 0 {
 			break
 		}
@@ -192,10 +239,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		remaining--
 	}
 
-	newlyStartedN := diff - remaining
+	newlyStartedN := n - remaining
 	slog.Info("scale up completed", slog.Int("n", newlyStartedN))
-
-	r.Stats.ScaleUp.Add(1)
 
 	return nil
 }
@@ -209,14 +254,37 @@ func (r *Reconciler) startMachine(ctx context.Context, id string) error {
 	return nil
 }
 
-// MachineN returns the number of machines to scale to based on Expr.
-func (r *Reconciler) MachineN() (int, error) {
+func (r *Reconciler) stopMachine(ctx context.Context, id string) error {
+	if err := r.client.Stop(ctx, fly.StopMachineInput{ID: id}, ""); err != nil {
+		r.Stats.MachineStopFailed.Add(1)
+		return err
+	}
+	r.Stats.MachineStopped.Add(1)
+	return nil
+}
+
+// CalcMinStartedMachineN returns the number of minimum number of started machines.
+func (r *Reconciler) CalcMinStartedMachineN() (int, error) {
+	return r.evalInt(r.MinStartedMachineN)
+}
+
+// CalcMaxStartedMachineN returns the number of maximum number of started machines.
+func (r *Reconciler) CalcMaxStartedMachineN() (int, error) {
+	return r.evalInt(r.MaxStartedMachineN)
+}
+
+// evalInt compiles & runs an expression. Returns a rounded integer.
+func (r *Reconciler) evalInt(s string) (int, error) {
+	if s == "" {
+		return 0, ErrExprRequired
+	}
+
 	env := map[string]any{}
 	for k, v := range r.metrics {
 		env[k] = v
 	}
 
-	program, err := expr.Compile(r.Expr, expr.AsFloat64(), expr.Env(env))
+	program, err := expr.Compile(s, expr.AsFloat64(), expr.Env(env))
 	if err != nil {
 		return 0, fmt.Errorf("compile expression: %w", err)
 	}
@@ -241,6 +309,7 @@ func (r *Reconciler) MachineN() (int, error) {
 
 func (r *Reconciler) RegisterPromMetrics(reg prometheus.Registerer) {
 	r.registerMachineStartCount(reg)
+	r.registerMachineStoppedCount(reg)
 	r.registerReconcileCount(reg)
 }
 
@@ -250,16 +319,35 @@ func (r *Reconciler) registerMachineStartCount(reg prometheus.Registerer) {
 	reg.MustRegister(prometheus.NewCounterFunc(
 		prometheus.CounterOpts{
 			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "started"},
+			ConstLabels: prometheus.Labels{"status": "ok"},
 		},
 		func() float64 { return float64(r.Stats.MachineStarted.Load()) },
 	))
 	reg.MustRegister(prometheus.NewCounterFunc(
 		prometheus.CounterOpts{
-			Name:        "fas_machine_start_count",
+			Name:        name,
 			ConstLabels: prometheus.Labels{"status": "failed"},
 		},
 		func() float64 { return float64(r.Stats.MachineStartFailed.Load()) },
+	))
+}
+
+func (r *Reconciler) registerMachineStoppedCount(reg prometheus.Registerer) {
+	const name = "fas_machine_stop_count"
+
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: prometheus.Labels{"status": "ok"},
+		},
+		func() float64 { return float64(r.Stats.MachineStopped.Load()) },
+	))
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: prometheus.Labels{"status": "failed"},
+		},
+		func() float64 { return float64(r.Stats.MachineStopFailed.Load()) },
 	))
 }
 
