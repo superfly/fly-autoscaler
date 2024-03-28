@@ -55,6 +55,8 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 
 	// Instantiate and start reconcilation.
 	r := fas.NewReconciler(client)
+	r.MinCreatedMachineN = c.Config.GetMinCreatedMachineN()
+	r.MaxCreatedMachineN = c.Config.GetMaxCreatedMachineN()
 	r.MinStartedMachineN = c.Config.GetMinStartedMachineN()
 	r.MaxStartedMachineN = c.Config.GetMaxStartedMachineN()
 	r.Interval = c.Config.Interval

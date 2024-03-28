@@ -106,6 +106,10 @@ func registerConfigPathFlag(fs *flag.FlagSet) *string {
 
 type Config struct {
 	AppName            string        `yaml:"app-name"`
+	Regions            []string      `yaml:"regions"`
+	CreatedMachineN    string        `yaml:"created-machine-count"`
+	MinCreatedMachineN string        `yaml:"min-created-machine-count"`
+	MaxCreatedMachineN string        `yaml:"max-created-machine-count"`
 	StartedMachineN    string        `yaml:"started-machine-count"`
 	MinStartedMachineN string        `yaml:"min-started-machine-count"`
 	MaxStartedMachineN string        `yaml:"max-started-machine-count"`
@@ -125,10 +129,17 @@ func NewConfig() *Config {
 func NewConfigFromEnv() (*Config, error) {
 	c := NewConfig()
 	c.AppName = os.Getenv("FAS_APP_NAME")
+	c.CreatedMachineN = os.Getenv("FAS_CREATED_MACHINE_COUNT")
+	c.MinCreatedMachineN = os.Getenv("FAS_MIN_CREATED_MACHINE_COUNT")
+	c.MaxCreatedMachineN = os.Getenv("FAS_MAX_CREATED_MACHINE_COUNT")
 	c.StartedMachineN = os.Getenv("FAS_STARTED_MACHINE_COUNT")
 	c.MinStartedMachineN = os.Getenv("FAS_MIN_STARTED_MACHINE_COUNT")
 	c.MaxStartedMachineN = os.Getenv("FAS_MAX_STARTED_MACHINE_COUNT")
 	c.APIToken = os.Getenv("FAS_API_TOKEN")
+
+	if s := os.Getenv("FAS_REGIONS"); s != "" {
+		c.Regions = strings.Split(s, ",")
+	}
 
 	if s := os.Getenv("FAS_INTERVAL"); s != "" {
 		d, err := time.ParseDuration(s)
@@ -149,6 +160,20 @@ func NewConfigFromEnv() (*Config, error) {
 	}
 
 	return c, nil
+}
+
+func (c *Config) GetMinCreatedMachineN() string {
+	if v := c.CreatedMachineN; v != "" {
+		return v
+	}
+	return c.MinCreatedMachineN
+}
+
+func (c *Config) GetMaxCreatedMachineN() string {
+	if v := c.CreatedMachineN; v != "" {
+		return v
+	}
+	return c.MaxCreatedMachineN
 }
 
 func (c *Config) GetMinStartedMachineN() string {

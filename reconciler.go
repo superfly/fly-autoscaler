@@ -24,8 +24,9 @@ const (
 // Reconciler represents the central part of the autoscaler that stores metrics,
 // computes the number of necessary machines, and performs scaling.
 type Reconciler struct {
-	client  FlyClient
-	metrics map[string]float64
+	client    FlyClient
+	metrics   map[string]float64
+	regionSeq atomic.Int64
 
 	wg     sync.WaitGroup
 	ctx    context.Context
@@ -34,7 +35,19 @@ type Reconciler struct {
 	// The frequency to run the reconciliation loop.
 	Interval time.Duration
 
-	// Expression used for calculating the
+	// List of regions that machines can be created in.
+	// The reconciler uses a round-robin approach to choosing next region.
+	Regions []string
+
+	// Expression used for calculating the number of created machines.
+	// If current number is less than min, more machines will be created.
+	// If current number is more than max, machines will be destroyed.
+	MinCreatedMachineN string
+	MaxCreatedMachineN string
+
+	// Expression used for calculating the number of currently started machines.
+	// If current number is less than min, more machines will be started.
+	// If current number is more than max, machines will be stopped.
 	MinStartedMachineN string
 	MaxStartedMachineN string
 
@@ -44,15 +57,21 @@ type Reconciler struct {
 	// Must also be registered in RegisterPromMetrics() for visibility.
 	Stats struct {
 		// Outcomes, incremented for each reconciliation.
-		ScaleUp   atomic.Int64
-		ScaleDown atomic.Int64
-		NoScale   atomic.Int64
+		BulkCreate  atomic.Int64
+		BulkDestroy atomic.Int64
+		BulkStart   atomic.Int64
+		BulkStop    atomic.Int64
+		NoScale     atomic.Int64
 
 		// Individual machine stats.
-		MachineStarted     atomic.Int64
-		MachineStartFailed atomic.Int64
-		MachineStopped     atomic.Int64
-		MachineStopFailed  atomic.Int64
+		MachineCreated       atomic.Int64
+		MachineCreateFailed  atomic.Int64
+		MachineDestroyed     atomic.Int64
+		MachineDestroyFailed atomic.Int64
+		MachineStarted       atomic.Int64
+		MachineStartFailed   atomic.Int64
+		MachineStopped       atomic.Int64
+		MachineStopFailed    atomic.Int64
 	}
 }
 
@@ -64,6 +83,17 @@ func NewReconciler(client FlyClient) *Reconciler {
 	}
 	r.ctx, r.cancel = context.WithCancelCause(context.Background())
 	return r
+}
+
+// NextRegion returns the next region to launch a machine in.
+// If Regions is empty, returns a blank string.
+func (r *Reconciler) NextRegion() string {
+	if len(r.Regions) == 0 {
+		return ""
+	}
+
+	i := int(r.regionSeq.Add(1))
+	return r.Regions[(i-1)%len(r.Regions)]
 }
 
 // Start runs the reconciliation loop in a separate goroutine.
@@ -134,17 +164,26 @@ func (r *Reconciler) CollectMetrics(ctx context.Context) error {
 // themselves down to scale down. Returns the number of started machines, if any.
 func (r *Reconciler) Reconcile(ctx context.Context) error {
 	// Compute number of machines based on expr & metrics
-	minStartedN, err := r.CalcMinStartedMachineN()
+	minCreatedN, hasMinCreatedN, err := r.CalcMinCreatedMachineN()
+	if err != nil {
+		return fmt.Errorf("compute minimum created machine count: %w", err)
+	}
+	maxCreatedN, hasMaxCreatedN, err := r.CalcMaxCreatedMachineN()
+	if err != nil {
+		return fmt.Errorf("compute minimum created machine count: %w", err)
+	}
+
+	minStartedN, hasMinStartedN, err := r.CalcMinStartedMachineN()
 	if err != nil {
 		return fmt.Errorf("compute minimum started machine count: %w", err)
 	}
-	maxStartedN, err := r.CalcMaxStartedMachineN()
+	maxStartedN, hasMaxStartedN, err := r.CalcMaxStartedMachineN()
 	if err != nil {
 		return fmt.Errorf("compute minimum started machine count: %w", err)
 	}
 
 	// Fetch list of running machines.
-	machines, err := r.client.List(ctx, "")
+	machines, err := r.listMachines(ctx)
 	if err != nil {
 		return fmt.Errorf("list machines: %w", err)
 	}
@@ -157,6 +196,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			slog.Int("stopped", len(m[fly.MachineStateStopped])),
 		),
 		slog.Group("target",
+			slog.Group("created",
+				slog.Int("min", minCreatedN),
+				slog.Int("max", maxCreatedN),
+			),
 			slog.Group("started",
 				slog.Int("min", minStartedN),
 				slog.Int("max", maxStartedN),
@@ -164,54 +207,123 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		),
 	)
 
-	// Determine if we need to scale up or down.
+	// Determine if we need to create or destroy machines.
+	createdN := len(machines)
+	if hasMinCreatedN && createdN < minCreatedN {
+		if len(machines) == 0 {
+			return fmt.Errorf("no machine available to clone for scale up")
+		}
+
+		machine := machines[0]
+		config := machine.Config
+		config.Image = machine.FullImageRef()
+		return r.createN(ctx, machines[0].Config, machine.Region, minCreatedN-createdN)
+	}
+	if hasMaxCreatedN && createdN > maxCreatedN {
+		return r.destroyN(ctx, m, createdN-maxCreatedN)
+	}
+
+	// Determine if we need to start/stop machines.
 	startedN := len(m[fly.MachineStateStarted])
-	if startedN > maxStartedN {
-		return r.scaleDown(ctx, m[fly.MachineStateStarted], startedN-maxStartedN)
-	} else if startedN < minStartedN {
-		return r.scaleUp(ctx, m[fly.MachineStateStopped], minStartedN-startedN)
+	if hasMinStartedN && startedN < minStartedN {
+		return r.startN(ctx, m[fly.MachineStateStopped], minStartedN-startedN)
+	}
+	if hasMaxStartedN && startedN > maxStartedN {
+		return r.stopN(ctx, m[fly.MachineStateStarted], startedN-maxStartedN)
 	}
 
 	r.Stats.NoScale.Add(1)
 	return nil
 }
 
-func (r *Reconciler) scaleDown(ctx context.Context, startedMachines []*fly.Machine, n int) error {
-	r.Stats.ScaleDown.Add(1)
+func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, defaultRegion string, n int) error {
+	r.Stats.BulkCreate.Add(1)
 
-	slog.Info("begin scale down")
+	slog.Info("begin bulk create")
 
-	// Sort stopped machines by an arbitrary value (ID) so results are deterministic.
-	sort.Slice(startedMachines, func(i, j int) bool { return startedMachines[i].ID < startedMachines[j].ID })
-
-	// Attempt to stop as many machines as needed.
+	// Attempt to start as many machines as needed.
 	remaining := n
-	for _, machine := range startedMachines {
-		if remaining <= 0 {
-			break
+	for remaining > 0 {
+		// Cycle through possible regions, if set.
+		// Otherwise use the region of the source machine we're cloning.
+		region := r.NextRegion()
+		if region == "" {
+			region = defaultRegion
 		}
 
-		if err := r.stopMachine(ctx, machine.ID); err != nil {
-			slog.Error("cannot stop machine, skipping",
-				slog.String("id", machine.ID),
-				slog.Any("err", err))
+		machine, err := r.createMachine(ctx, config, region)
+		if err != nil {
+			slog.Error("cannot create machine, skipping", slog.Any("err", err))
 			continue
 		}
 
-		slog.Info("machine stopped", slog.String("id", machine.ID))
+		slog.Info("machine created",
+			slog.String("id", machine.ID),
+			slog.String("region", machine.Region))
+
 		remaining--
 	}
 
-	newlyStoppedN := n - remaining
-	slog.Info("scale down completed", slog.Int("n", newlyStoppedN))
+	newlyCreatedN := n - remaining
+	slog.Info("bulk create completed", slog.Int("n", newlyCreatedN))
 
 	return nil
 }
 
-func (r *Reconciler) scaleUp(ctx context.Context, stoppedMachines []*fly.Machine, n int) error {
-	r.Stats.ScaleUp.Add(1)
+func (r *Reconciler) destroyN(ctx context.Context, machinesByState map[string][]*fly.Machine, n int) error {
+	r.Stats.BulkDestroy.Add(1)
 
-	slog.Info("begin scale up")
+	slog.Info("begin bulk destroy")
+
+	// Attempt to destroy as many machines as needed.
+	remaining := n
+	for remaining > 0 {
+		machine := chooseNextDestroyCandidate(machinesByState)
+		if machine == nil {
+			break
+		}
+
+		if err := r.destroyMachine(ctx, machine.ID); err != nil {
+			slog.Error("cannot destroy machine, skipping", slog.Any("err", err))
+			remaining-- // don't retry so we don't kill too many machines
+			continue
+		}
+
+		slog.Info("machine destroyed",
+			slog.String("id", machine.ID),
+			slog.String("region", machine.Region))
+
+		remaining--
+	}
+
+	newlyDestroyedN := n - remaining
+	slog.Info("bulk destroy completed", slog.Int("n", newlyDestroyedN))
+
+	return nil
+}
+
+func chooseNextDestroyCandidate(m map[string][]*fly.Machine) *fly.Machine {
+	// Iterate over available machines in order of state. We want to try to
+	// destroy stopped machines before destroying started machines.
+	for _, state := range []string{
+		fly.MachineStateStopped,
+		fly.MachineStateCreated,
+		fly.MachineStateStarted,
+	} {
+		if len(m[state]) > 0 {
+			candidate := m[state][0]
+			m[state] = m[state][1:] // trim machine from the front of the list
+			return candidate
+		}
+	}
+
+	return nil
+}
+
+func (r *Reconciler) startN(ctx context.Context, stoppedMachines []*fly.Machine, n int) error {
+	r.Stats.BulkStart.Add(1)
+
+	slog.Info("begin bulk start")
 
 	// Let the user know if we don't have enough machines to reach the target count.
 	if len(stoppedMachines) < n {
@@ -240,8 +352,70 @@ func (r *Reconciler) scaleUp(ctx context.Context, stoppedMachines []*fly.Machine
 	}
 
 	newlyStartedN := n - remaining
-	slog.Info("scale up completed", slog.Int("n", newlyStartedN))
+	slog.Info("bulk start completed", slog.Int("n", newlyStartedN))
 
+	return nil
+}
+
+func (r *Reconciler) stopN(ctx context.Context, startedMachines []*fly.Machine, n int) error {
+	r.Stats.BulkStop.Add(1)
+
+	slog.Info("begin bulk stop")
+
+	// Sort stopped machines by an arbitrary value (ID) so results are deterministic.
+	sort.Slice(startedMachines, func(i, j int) bool { return startedMachines[i].ID < startedMachines[j].ID })
+
+	// Attempt to stop as many machines as needed.
+	remaining := n
+	for _, machine := range startedMachines {
+		if remaining <= 0 {
+			break
+		}
+
+		if err := r.stopMachine(ctx, machine.ID); err != nil {
+			slog.Error("cannot stop machine, skipping",
+				slog.String("id", machine.ID),
+				slog.Any("err", err))
+			continue
+		}
+
+		slog.Info("machine stopped", slog.String("id", machine.ID))
+		remaining--
+	}
+
+	newlyStoppedN := n - remaining
+	slog.Info("bulk stop completed", slog.Int("n", newlyStoppedN))
+
+	return nil
+}
+
+func (r *Reconciler) listMachines(ctx context.Context) ([]*fly.Machine, error) {
+	machines, err := r.client.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return machines, nil
+}
+
+func (r *Reconciler) createMachine(ctx context.Context, config *fly.MachineConfig, region string) (*fly.Machine, error) {
+	machine, err := r.client.Launch(ctx, fly.LaunchMachineInput{
+		Config: config,
+		Region: region,
+	})
+	if err != nil {
+		r.Stats.MachineCreateFailed.Add(1)
+		return nil, err
+	}
+	r.Stats.MachineCreated.Add(1)
+	return machine, nil
+}
+
+func (r *Reconciler) destroyMachine(ctx context.Context, id string) error {
+	if err := r.client.Destroy(ctx, fly.RemoveMachineInput{ID: id}, ""); err != nil {
+		r.Stats.MachineDestroyFailed.Add(1)
+		return err
+	}
+	r.Stats.MachineDestroyed.Add(1)
 	return nil
 }
 
@@ -263,20 +437,51 @@ func (r *Reconciler) stopMachine(ctx context.Context, id string) error {
 	return nil
 }
 
-// CalcMinStartedMachineN returns the number of minimum number of started machines.
-func (r *Reconciler) CalcMinStartedMachineN() (int, error) {
+// CalcMinCreatedMachineN returns the minimum number of created machines.
+func (r *Reconciler) CalcMinCreatedMachineN() (int, bool, error) {
+	v, ok, err := r.evalInt(r.MinCreatedMachineN)
+	if err != nil || !ok {
+		return v, ok, err
+	}
+
+	// We cannot scale to zero as we will not have a machine available to clone
+	// on the creation phase of scaling up.
+	if v <= 1 {
+		v = 1
+	}
+	return v, true, nil
+}
+
+// CalcMaxCreatedMachineN returns the maximum number of created machines.
+func (r *Reconciler) CalcMaxCreatedMachineN() (int, bool, error) {
+	v, ok, err := r.evalInt(r.MaxCreatedMachineN)
+	if err != nil || !ok {
+		return v, ok, err
+	}
+
+	// We cannot scale to zero as we will not have a machine available to clone
+	// on the creation phase of scaling up.
+	if v <= 1 {
+		v = 1
+	}
+	return v, true, nil
+}
+
+// CalcMinStartedMachineN returns the minimum number of started machines.
+func (r *Reconciler) CalcMinStartedMachineN() (int, bool, error) {
 	return r.evalInt(r.MinStartedMachineN)
 }
 
-// CalcMaxStartedMachineN returns the number of maximum number of started machines.
-func (r *Reconciler) CalcMaxStartedMachineN() (int, error) {
+// CalcMaxStartedMachineN returns the maximum number of started machines.
+func (r *Reconciler) CalcMaxStartedMachineN() (int, bool, error) {
 	return r.evalInt(r.MaxStartedMachineN)
 }
 
 // evalInt compiles & runs an expression. Returns a rounded integer.
-func (r *Reconciler) evalInt(s string) (int, error) {
+// Returns a true if the second argument if s is not blank. Otherwise returns false.
+func (r *Reconciler) evalInt(s string) (int, bool, error) {
 	if s == "" {
-		return 0, ErrExprRequired
+		return 0, false, nil
 	}
 
 	env := map[string]any{}
@@ -286,25 +491,25 @@ func (r *Reconciler) evalInt(s string) (int, error) {
 
 	program, err := expr.Compile(s, expr.AsFloat64(), expr.Env(env))
 	if err != nil {
-		return 0, fmt.Errorf("compile expression: %w", err)
+		return 0, true, fmt.Errorf("compile expression: %w", err)
 	}
 
 	v, err := expr.Run(program, env)
 	if err != nil {
-		return 0, fmt.Errorf("execute expression: %w", err)
+		return 0, true, fmt.Errorf("execute expression: %w", err)
 	}
 
 	f := math.Round(v.(float64))
 	if math.IsNaN(f) {
-		return 0, ErrExprNaN
+		return 0, true, ErrExprNaN
 	} else if math.IsInf(f, 0) {
-		return 0, ErrExprInf
+		return 0, true, ErrExprInf
 	}
 
 	if f < 0 {
-		return 0, nil
+		return 0, true, nil
 	}
-	return int(f), nil
+	return int(f), true, nil
 }
 
 func (r *Reconciler) RegisterPromMetrics(reg prometheus.Registerer) {
@@ -357,17 +562,33 @@ func (r *Reconciler) registerReconcileCount(reg prometheus.Registerer) {
 	reg.MustRegister(prometheus.NewCounterFunc(
 		prometheus.CounterOpts{
 			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "scale_up"},
+			ConstLabels: prometheus.Labels{"status": "create"},
 		},
-		func() float64 { return float64(r.Stats.ScaleUp.Load()) },
+		func() float64 { return float64(r.Stats.BulkCreate.Load()) },
 	))
 
 	reg.MustRegister(prometheus.NewCounterFunc(
 		prometheus.CounterOpts{
 			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "scale_down"},
+			ConstLabels: prometheus.Labels{"status": "destroy"},
 		},
-		func() float64 { return float64(r.Stats.ScaleDown.Load()) },
+		func() float64 { return float64(r.Stats.BulkDestroy.Load()) },
+	))
+
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: prometheus.Labels{"status": "start"},
+		},
+		func() float64 { return float64(r.Stats.BulkStart.Load()) },
+	))
+
+	reg.MustRegister(prometheus.NewCounterFunc(
+		prometheus.CounterOpts{
+			Name:        name,
+			ConstLabels: prometheus.Labels{"status": "stop"},
+		},
+		func() float64 { return float64(r.Stats.BulkStop.Load()) },
 	))
 
 	reg.MustRegister(prometheus.NewCounterFunc(
