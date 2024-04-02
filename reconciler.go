@@ -411,7 +411,7 @@ func (r *Reconciler) createMachine(ctx context.Context, config *fly.MachineConfi
 }
 
 func (r *Reconciler) destroyMachine(ctx context.Context, id string) error {
-	if err := r.client.Destroy(ctx, fly.RemoveMachineInput{ID: id}, ""); err != nil {
+	if err := r.client.Destroy(ctx, fly.RemoveMachineInput{ID: id, Kill: true}, ""); err != nil {
 		r.Stats.MachineDestroyFailed.Add(1)
 		return err
 	}
