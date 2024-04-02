@@ -59,6 +59,7 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	r.MaxCreatedMachineN = c.Config.GetMaxCreatedMachineN()
 	r.MinStartedMachineN = c.Config.GetMinStartedMachineN()
 	r.MaxStartedMachineN = c.Config.GetMaxStartedMachineN()
+	r.Regions = c.Config.Regions
 	r.Interval = c.Config.Interval
 	r.Collectors = collectors
 	r.RegisterPromMetrics(prometheus.DefaultRegisterer)
