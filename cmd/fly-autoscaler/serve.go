@@ -32,6 +32,10 @@ func (c *ServeCommand) Close() (err error) {
 }
 
 func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
+	slog.Info("fly-autoscaler",
+		slog.String("version", Version),
+		slog.String("commit", Commit))
+
 	if err := c.parseFlags(ctx, args); err != nil {
 		return err
 	}
