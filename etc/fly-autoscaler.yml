@@ -1,6 +1,27 @@
 # The name of the target app that you want to scale.
 app-name: "TARGET_APP_NAME"
 
+# A list of regions to create machines in. Regions are chosen via round robin
+# so that machines are evenly distributed.
+# 
+# If this is not specified, the autoscaler will choose a region based on the
+# regions that the app is currently running in.
+regions: ['iad', 'ord', 'sjc']
+
+# This expression determines the number of machines to maintain in your app
+# after each reconciliation. If the number of machines drops below this
+# threshold then more will be created by cloning one of the existing machines.
+# If the number of machines is above this threshold then some machines will be
+# destroyed.
+#
+# There always needs to be at least one machine in your application so the 
+# autoscaler will never destroy your last machine, even if the threshold reaches
+# zero.
+# 
+# You can also define separate minimum & maximum thresholds using the
+# "min_created_machine_count" & "max_created_machine_count" fields.
+created-machine-count: "ceil(queue_depth / 10)"
+
 # This expression determines the number of machines to maintain in a "started"
 # state after each reconciliation. If the number of started machines is less
 # existing machines will be started. If the number of started machines is more

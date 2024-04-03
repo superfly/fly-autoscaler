@@ -55,14 +55,44 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 
 	// Instantiate and start reconcilation.
 	r := fas.NewReconciler(client)
+	r.MinCreatedMachineN = c.Config.GetMinCreatedMachineN()
+	r.MaxCreatedMachineN = c.Config.GetMaxCreatedMachineN()
 	r.MinStartedMachineN = c.Config.GetMinStartedMachineN()
 	r.MaxStartedMachineN = c.Config.GetMaxStartedMachineN()
+	r.Regions = c.Config.Regions
 	r.Interval = c.Config.Interval
 	r.Collectors = collectors
 	r.RegisterPromMetrics(prometheus.DefaultRegisterer)
 	c.reconciler = r
 
-	slog.Info("beginning reconciliation loop")
+	attrs := []any{
+		slog.Duration("interval", r.Interval),
+		slog.Int("collectors", len(r.Collectors)),
+	}
+
+	if len(r.Regions) > 0 {
+		attrs = append(attrs, slog.Any("regions", r.Regions))
+	}
+
+	if r.MinCreatedMachineN == r.MaxCreatedMachineN {
+		attrs = append(attrs, slog.String("created", r.MinCreatedMachineN))
+	} else if r.MinCreatedMachineN != "" || r.MaxCreatedMachineN != "" {
+		attrs = append(attrs, slog.Group("created",
+			slog.String("min", r.MinCreatedMachineN),
+			slog.String("max", r.MaxCreatedMachineN),
+		))
+	}
+
+	if r.MinStartedMachineN == r.MaxStartedMachineN {
+		attrs = append(attrs, slog.String("started", r.MinStartedMachineN))
+	} else if r.MinStartedMachineN != "" || r.MaxStartedMachineN != "" {
+		attrs = append(attrs, slog.Group("started",
+			slog.String("min", r.MinStartedMachineN),
+			slog.String("max", r.MaxStartedMachineN),
+		))
+	}
+
+	slog.Info("reconciler initialized, beginning loop", attrs...)
 	r.Start()
 
 	go c.serveMetricsServer(ctx)

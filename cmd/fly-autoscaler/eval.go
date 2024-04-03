@@ -34,6 +34,8 @@ func (c *EvalCommand) Run(ctx context.Context, args []string) (err error) {
 
 	// Instantiate reconciler and evaluate once.
 	r := fas.NewReconciler(nil)
+	r.MinCreatedMachineN = c.Config.GetMinCreatedMachineN()
+	r.MaxCreatedMachineN = c.Config.GetMaxCreatedMachineN()
 	r.MinStartedMachineN = c.Config.GetMinStartedMachineN()
 	r.MaxStartedMachineN = c.Config.GetMaxStartedMachineN()
 	r.Collectors = collectors
@@ -43,11 +45,28 @@ func (c *EvalCommand) Run(ctx context.Context, args []string) (err error) {
 	}
 
 	var out evalOutput
-	if out.Started.Min, err = r.CalcMinStartedMachineN(); err != nil {
-		return fmt.Errorf("cannot calculate min machine count: %w", err)
+	if v, ok, err := r.CalcMinCreatedMachineN(); err != nil {
+		return fmt.Errorf("cannot calculate min created machine count: %w", err)
+	} else if ok {
+		out.Created.Min = &v
 	}
-	if out.Started.Max, err = r.CalcMaxStartedMachineN(); err != nil {
-		return fmt.Errorf("cannot calculate max machine count: %w", err)
+
+	if v, ok, err := r.CalcMaxCreatedMachineN(); err != nil {
+		return fmt.Errorf("cannot calculate max created machine count: %w", err)
+	} else if ok {
+		out.Created.Max = &v
+	}
+
+	if v, ok, err := r.CalcMinStartedMachineN(); err != nil {
+		return fmt.Errorf("cannot calculate min started machine count: %w", err)
+	} else if ok {
+		out.Started.Min = &v
+	}
+
+	if v, ok, err := r.CalcMaxStartedMachineN(); err != nil {
+		return fmt.Errorf("cannot calculate max started machine count: %w", err)
+	} else if ok {
+		out.Started.Max = &v
 	}
 
 	buf, err := json.MarshalIndent(out, "", "  ")
@@ -95,8 +114,13 @@ Arguments:
 }
 
 type evalOutput struct {
+	Created struct {
+		Min *int `json:"min"`
+		Max *int `json:"max"`
+	} `json:"created"`
+
 	Started struct {
-		Min int `json:"min"`
-		Max int `json:"max"`
+		Min *int `json:"min"`
+		Max *int `json:"max"`
 	} `json:"started"`
 }

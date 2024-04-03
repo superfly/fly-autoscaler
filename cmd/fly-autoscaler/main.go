@@ -106,6 +106,10 @@ func registerConfigPathFlag(fs *flag.FlagSet) *string {
 
 type Config struct {
 	AppName            string        `yaml:"app-name"`
+	Regions            []string      `yaml:"regions"`
+	CreatedMachineN    string        `yaml:"created-machine-count"`
+	MinCreatedMachineN string        `yaml:"min-created-machine-count"`
+	MaxCreatedMachineN string        `yaml:"max-created-machine-count"`
 	StartedMachineN    string        `yaml:"started-machine-count"`
 	MinStartedMachineN string        `yaml:"min-started-machine-count"`
 	MaxStartedMachineN string        `yaml:"max-started-machine-count"`
@@ -125,10 +129,17 @@ func NewConfig() *Config {
 func NewConfigFromEnv() (*Config, error) {
 	c := NewConfig()
 	c.AppName = os.Getenv("FAS_APP_NAME")
+	c.CreatedMachineN = os.Getenv("FAS_CREATED_MACHINE_COUNT")
+	c.MinCreatedMachineN = os.Getenv("FAS_MIN_CREATED_MACHINE_COUNT")
+	c.MaxCreatedMachineN = os.Getenv("FAS_MAX_CREATED_MACHINE_COUNT")
 	c.StartedMachineN = os.Getenv("FAS_STARTED_MACHINE_COUNT")
 	c.MinStartedMachineN = os.Getenv("FAS_MIN_STARTED_MACHINE_COUNT")
 	c.MaxStartedMachineN = os.Getenv("FAS_MAX_STARTED_MACHINE_COUNT")
 	c.APIToken = os.Getenv("FAS_API_TOKEN")
+
+	if s := os.Getenv("FAS_REGIONS"); s != "" {
+		c.Regions = strings.Split(s, ",")
+	}
 
 	if s := os.Getenv("FAS_INTERVAL"); s != "" {
 		d, err := time.ParseDuration(s)
@@ -151,6 +162,28 @@ func NewConfigFromEnv() (*Config, error) {
 	return c, nil
 }
 
+func (c *Config) IsCreatedMachineCountDefined() bool {
+	return c.CreatedMachineN != "" || c.MinCreatedMachineN != "" || c.MaxCreatedMachineN != ""
+}
+
+func (c *Config) GetMinCreatedMachineN() string {
+	if v := c.CreatedMachineN; v != "" {
+		return v
+	}
+	return c.MinCreatedMachineN
+}
+
+func (c *Config) GetMaxCreatedMachineN() string {
+	if v := c.CreatedMachineN; v != "" {
+		return v
+	}
+	return c.MaxCreatedMachineN
+}
+
+func (c *Config) IsStartedMachineCountDefined() bool {
+	return c.StartedMachineN != "" || c.MinStartedMachineN != "" || c.MaxStartedMachineN != ""
+}
+
 func (c *Config) GetMinStartedMachineN() string {
 	if v := c.StartedMachineN; v != "" {
 		return v
@@ -170,24 +203,54 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("app name required")
 	}
 
-	// Ensure either a single machine count is defined or a range.
-	if c.StartedMachineN != "" && (c.MinStartedMachineN != "" || c.MaxStartedMachineN != "") {
-		return fmt.Errorf("cannot define started machine count and min/max started machine count")
+	if !c.IsCreatedMachineCountDefined() && !c.IsStartedMachineCountDefined() {
+		return fmt.Errorf("must define either created machine count or started machine count")
 	}
-	if c.StartedMachineN == "" && c.MinStartedMachineN == "" && c.MaxStartedMachineN == "" {
-		return fmt.Errorf("started machine count required")
+	if err := c.validateCreatedMachineCount(); err != nil {
+		return err
 	}
-	if c.MinStartedMachineN != "" && c.MaxStartedMachineN == "" {
-		return fmt.Errorf("max started machine count required if min started machine count is defined")
-	}
-	if c.MinStartedMachineN == "" && c.MaxStartedMachineN != "" {
-		return fmt.Errorf("min started machine count required if max started machine count is defined")
+	if err := c.validateStartedMachineCount(); err != nil {
+		return err
 	}
 
 	for i, collectorConfig := range c.MetricCollectors {
 		if err := collectorConfig.Validate(); err != nil {
 			return fmt.Errorf("metric-collectors[%d]: %w", i, err)
 		}
+	}
+	return nil
+}
+
+func (c *Config) validateCreatedMachineCount() error {
+	if !c.IsCreatedMachineCountDefined() {
+		return nil
+	}
+
+	if c.CreatedMachineN != "" && (c.MinCreatedMachineN != "" || c.MaxCreatedMachineN != "") {
+		return fmt.Errorf("cannot define created machine count and min/max created machine count")
+	}
+	if c.MinCreatedMachineN != "" && c.MaxCreatedMachineN == "" {
+		return fmt.Errorf("max created machine count required if min created machine count is defined")
+	}
+	if c.MinCreatedMachineN == "" && c.MaxCreatedMachineN != "" {
+		return fmt.Errorf("min created machine count required if max created machine count is defined")
+	}
+	return nil
+}
+
+func (c *Config) validateStartedMachineCount() error {
+	if !c.IsStartedMachineCountDefined() {
+		return nil
+	}
+
+	if c.StartedMachineN != "" && (c.MinStartedMachineN != "" || c.MaxStartedMachineN != "") {
+		return fmt.Errorf("cannot define started machine count and min/max started machine count")
+	}
+	if c.MinStartedMachineN != "" && c.MaxStartedMachineN == "" {
+		return fmt.Errorf("max started machine count required if min started machine count is defined")
+	}
+	if c.MinStartedMachineN == "" && c.MaxStartedMachineN != "" {
+		return fmt.Errorf("min started machine count required if max started machine count is defined")
 	}
 	return nil
 }
