@@ -51,3 +51,10 @@ metric-collectors:
     address: "https://api.fly.io/prometheus/MY_ORG"
     query: "sum(queue_depth)"
     token: "FlyV1 ..."
+
+  - type: "temporal"
+    metric-name: "workflow_count"
+    address: "localhost:7233"
+    cert-data: "-----BEGIN CERTIFICATE-----..."
+    key-data: "-----BEGIN EC PRIVATE KEY-----..."
+    query: 'WorkflowType="my_workflow_type"'

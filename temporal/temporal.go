@@ -70,32 +70,14 @@ func (c *MetricCollector) CollectMetric(ctx context.Context) (float64, error) {
 	// Append additional query filter, if specified.
 	query := `ExecutionStatus="Running"`
 	if c.Query != "" {
-		query += " AND " + c.Query
+		query += " AND (" + c.Query + ")"
 	}
 
-	n, err := c.workflowExecutionN(ctx, query)
+	resp, err := c.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{
+		Query: query,
+	})
 	if err != nil {
 		return 0, err
 	}
-	return float64(n), nil
-}
-
-func (c *MetricCollector) workflowExecutionN(ctx context.Context, query string) (n int, err error) {
-	var nextPageToken []byte
-	for {
-		resp, err := c.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
-			Query:         query,
-			NextPageToken: nextPageToken,
-		})
-		if err != nil {
-			return n, err
-		}
-
-		n += len(resp.Executions)
-
-		nextPageToken = resp.NextPageToken
-		if len(nextPageToken) == 0 {
-			return n, nil
-		}
-	}
+	return float64(resp.Count), nil
 }
