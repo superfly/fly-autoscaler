@@ -174,6 +174,7 @@ func NewConfigFromEnv() (*Config, error) {
 		c.MetricCollectors = append(c.MetricCollectors, &MetricCollectorConfig{
 			Type:       "temporal",
 			Address:    addr,
+			Namespace:  os.Getenv("FAS_TEMPORAL_NAMESPACE"),
 			MetricName: os.Getenv("FAS_TEMPORAL_METRIC_NAME"),
 			CertData:   certData,
 			KeyData:    keyData,

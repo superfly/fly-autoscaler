@@ -3,7 +3,7 @@ package temporal
 import (
 	"context"
 	"crypto/tls"
-	"log/slog"
+	"fmt"
 
 	"github.com/superfly/fly-autoscaler"
 	"go.temporal.io/api/workflowservice/v1"
@@ -16,16 +16,13 @@ type MetricCollector struct {
 	name   string
 	client client.Client
 
-	// Host & port of the Temporal server. Defaults to localhost:7233.
-	// Must be set before calling Open().
+	// Host & port of the Temporal server. Must be set before calling Open().
 	Address string
 
-	// Namespace to connect to. Defaults to "default".
-	// Must be set before calling Open().
+	// Namespace to connect to. Must be set before calling Open().
 	Namespace string
 
-	// Certificate & key data. Optional.
-	// Must be set before calling Open().
+	// Certificate & key data. Optional. Must be set before calling Open().
 	Cert []byte
 	Key  []byte
 
@@ -38,17 +35,17 @@ func NewMetricCollector(name string) *MetricCollector {
 }
 
 func (c *MetricCollector) Open() (err error) {
+	if c.Address == "" {
+		return fmt.Errorf("temporal address required")
+	}
+	if c.Namespace == "" {
+		return fmt.Errorf("temporal namespace required")
+	}
+
 	opt := client.Options{
 		HostPort:  c.Address,
 		Namespace: c.Namespace,
 	}
-
-	slog.Info("connecting to temporal",
-		slog.String("address", c.Address),
-		slog.String("namespace", c.Namespace),
-		slog.String("cert", string(c.Cert)),
-		slog.String("key", string(c.Key)),
-		slog.String("query", c.Query))
 
 	if len(c.Cert) != 0 || len(c.Key) != 0 {
 		cert, err := tls.X509KeyPair(c.Cert, c.Key)

@@ -16,6 +16,8 @@ func TestMetricCollector_CollectMetric(t *testing.T) {
 	runTemporalDevServer(t)
 
 	c := temporal.NewMetricCollector("foo")
+	c.Address = "localhost:7233"
+	c.Namespace = "default"
 	// c.Query = `WorkflowType="workflow1"`
 	if err := c.Open(); err != nil {
 		t.Fatal(err)
