@@ -14,6 +14,7 @@ import (
 
 	fas "github.com/superfly/fly-autoscaler"
 	fasprom "github.com/superfly/fly-autoscaler/prometheus"
+	"github.com/superfly/fly-autoscaler/temporal"
 	"github.com/superfly/fly-go/flaps"
 	"github.com/superfly/fly-go/tokens"
 	"gopkg.in/yaml.v3"
@@ -156,6 +157,28 @@ func NewConfigFromEnv() (*Config, error) {
 			MetricName: os.Getenv("FAS_PROMETHEUS_METRIC_NAME"),
 			Query:      os.Getenv("FAS_PROMETHEUS_QUERY"),
 			Token:      os.Getenv("FAS_PROMETHEUS_TOKEN"),
+		})
+	}
+
+	if addr := os.Getenv("FAS_TEMPORAL_ADDRESS"); addr != "" {
+		certData := os.Getenv("TEMPORAL_TLS_CERT_DATA")
+		if certData == "" {
+			certData = os.Getenv("FAS_TEMPORAL_CERT_DATA")
+		}
+
+		keyData := os.Getenv("TEMPORAL_TLS_KEY_DATA")
+		if keyData == "" {
+			keyData = os.Getenv("FAS_TEMPORAL_KEY_DATA")
+		}
+
+		c.MetricCollectors = append(c.MetricCollectors, &MetricCollectorConfig{
+			Type:       "temporal",
+			Address:    addr,
+			Namespace:  os.Getenv("FAS_TEMPORAL_NAMESPACE"),
+			MetricName: os.Getenv("FAS_TEMPORAL_METRIC_NAME"),
+			CertData:   certData,
+			KeyData:    keyData,
+			Query:      os.Getenv("FAS_TEMPORAL_QUERY"),
 		})
 	}
 
@@ -303,11 +326,16 @@ func ParseConfigFromFile(filename string, config *Config) error {
 type MetricCollectorConfig struct {
 	Type       string `yaml:"type"`
 	MetricName string `yaml:"metric-name"`
+	Query      string `yaml:"query"`   // Prometheus & Temporal
+	Address    string `yaml:"address"` // Prometheus & Temporal
 
 	// Prometheus fields
-	Address string `yaml:"address"`
-	Query   string `yaml:"query"`
-	Token   string `yaml:"token"`
+	Token string `yaml:"token"`
+
+	// Temporal fields
+	Namespace string `yaml:"namespace"`
+	CertData  string `yaml:"cert-data"`
+	KeyData   string `yaml:"key-data"`
 }
 
 func (c *MetricCollectorConfig) Validate() error {
@@ -318,6 +346,8 @@ func (c *MetricCollectorConfig) Validate() error {
 	switch typ := c.Type; typ {
 	case "prometheus":
 		return c.validatePrometheus()
+	case "temporal":
+		return c.validateTemporal()
 	case "":
 		return fmt.Errorf("type required")
 	default:
@@ -335,10 +365,16 @@ func (c *MetricCollectorConfig) validatePrometheus() error {
 	return nil
 }
 
+func (c *MetricCollectorConfig) validateTemporal() error {
+	return nil
+}
+
 func (c *MetricCollectorConfig) NewMetricCollector() (fas.MetricCollector, error) {
 	switch typ := c.Type; typ {
 	case "prometheus":
 		return c.newPrometheusMetricCollector()
+	case "temporal":
+		return c.newTemporalMetricCollector()
 	default:
 		return nil, fmt.Errorf("invalid type: %q", typ)
 	}
@@ -351,4 +387,19 @@ func (c *MetricCollectorConfig) newPrometheusMetricCollector() (*fasprom.MetricC
 		c.Query,
 		c.Token,
 	)
+}
+
+func (c *MetricCollectorConfig) newTemporalMetricCollector() (*temporal.MetricCollector, error) {
+	collector := temporal.NewMetricCollector(c.MetricName)
+
+	collector.Address = c.Address
+	collector.Namespace = c.Namespace
+	collector.Cert = []byte(c.CertData)
+	collector.Key = []byte(c.KeyData)
+	collector.Query = c.Query
+
+	if err := collector.Open(); err != nil {
+		return nil, err
+	}
+	return collector, nil
 }
