@@ -3,6 +3,7 @@ package temporal
 import (
 	"context"
 	"crypto/tls"
+	"log/slog"
 
 	"github.com/superfly/fly-autoscaler"
 	"go.temporal.io/api/workflowservice/v1"
@@ -41,6 +42,13 @@ func (c *MetricCollector) Open() (err error) {
 		HostPort:  c.Address,
 		Namespace: c.Namespace,
 	}
+
+	slog.Info("connecting to temporal",
+		slog.String("address", c.Address),
+		slog.String("namespace", c.Namespace),
+		slog.String("cert", string(c.Cert)),
+		slog.String("key", string(c.Key)),
+		slog.String("query", c.Query))
 
 	if len(c.Cert) != 0 || len(c.Key) != 0 {
 		cert, err := tls.X509KeyPair(c.Cert, c.Key)
