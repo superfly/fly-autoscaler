@@ -17,7 +17,7 @@ type MetricCollector struct {
 
 	// Host & port of the Temporal server. Defaults to localhost:7233.
 	// Must be set before calling Open().
-	Hostport string
+	Address string
 
 	// Namespace to connect to. Defaults to "default".
 	// Must be set before calling Open().
@@ -38,7 +38,7 @@ func NewMetricCollector(name string) *MetricCollector {
 
 func (c *MetricCollector) Open() (err error) {
 	opt := client.Options{
-		HostPort:  c.Hostport,
+		HostPort:  c.Address,
 		Namespace: c.Namespace,
 	}
 
@@ -47,11 +47,10 @@ func (c *MetricCollector) Open() (err error) {
 		if err != nil {
 			return err
 		}
-		opt.Credentials = client.NewMTLSCredentials(cert)
+		opt.ConnectionOptions.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
 	}
 
 	c.client, err = client.Dial(opt)
-
 	return err
 }
 

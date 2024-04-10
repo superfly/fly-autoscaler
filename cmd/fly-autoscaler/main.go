@@ -160,7 +160,7 @@ func NewConfigFromEnv() (*Config, error) {
 		})
 	}
 
-	if hostport := os.Getenv("FAS_TEMPORAL_HOSTPORT"); hostport != "" {
+	if addr := os.Getenv("FAS_TEMPORAL_ADDRESS"); addr != "" {
 		certData := os.Getenv("TEMPORAL_TLS_CERT_DATA")
 		if certData == "" {
 			certData = os.Getenv("FAS_TEMPORAL_CERT_DATA")
@@ -173,7 +173,7 @@ func NewConfigFromEnv() (*Config, error) {
 
 		c.MetricCollectors = append(c.MetricCollectors, &MetricCollectorConfig{
 			Type:       "temporal",
-			Hostport:   hostport,
+			Address:    addr,
 			MetricName: os.Getenv("FAS_TEMPORAL_METRIC_NAME"),
 			CertData:   certData,
 			KeyData:    keyData,
@@ -325,14 +325,13 @@ func ParseConfigFromFile(filename string, config *Config) error {
 type MetricCollectorConfig struct {
 	Type       string `yaml:"type"`
 	MetricName string `yaml:"metric-name"`
-	Query      string `yaml:"query"` // Prometheus & Temporal
+	Query      string `yaml:"query"`   // Prometheus & Temporal
+	Address    string `yaml:"address"` // Prometheus & Temporal
 
 	// Prometheus fields
-	Address string `yaml:"address"`
-	Token   string `yaml:"token"`
+	Token string `yaml:"token"`
 
 	// Temporal fields
-	Hostport  string `yaml:"hostport"`
 	Namespace string `yaml:"namespace"`
 	CertData  string `yaml:"cert-data"`
 	KeyData   string `yaml:"key-data"`
@@ -392,7 +391,7 @@ func (c *MetricCollectorConfig) newPrometheusMetricCollector() (*fasprom.MetricC
 func (c *MetricCollectorConfig) newTemporalMetricCollector() (*temporal.MetricCollector, error) {
 	collector := temporal.NewMetricCollector(c.MetricName)
 
-	collector.Hostport = c.Hostport
+	collector.Address = c.Address
 	collector.Namespace = c.Namespace
 	collector.Cert = []byte(c.CertData)
 	collector.Key = []byte(c.KeyData)
