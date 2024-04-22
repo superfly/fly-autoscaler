@@ -24,7 +24,7 @@ const (
 // Reconciler represents the central part of the autoscaler that stores metrics,
 // computes the number of necessary machines, and performs scaling.
 type Reconciler struct {
-	client    FlyClient
+	client    FlapsClient
 	metrics   map[string]float64
 	regionSeq atomic.Int64
 
@@ -75,7 +75,7 @@ type Reconciler struct {
 	}
 }
 
-func NewReconciler(client FlyClient) *Reconciler {
+func NewReconciler(client FlapsClient) *Reconciler {
 	r := &Reconciler{
 		client:   client,
 		metrics:  make(map[string]float64),

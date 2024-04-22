@@ -154,7 +154,7 @@ func TestReconciler_MinStartedMachineN(t *testing.T) {
 // Ensure that if the target count and started count are the same, there
 // will not be any new machines started.
 func TestReconciler_Scale_NoScale(t *testing.T) {
-	var client mock.FlyClient
+	var client mock.FlapsClient
 	client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 		return []*fly.Machine{
 			{ID: "1", State: fly.MachineStateStarted},
@@ -180,7 +180,7 @@ func TestReconciler_Scale_Create(t *testing.T) {
 	// Ensure that machines will be created when below the min number.
 	t.Run("OK", func(t *testing.T) {
 		var invokeCreateN int
-		var client mock.FlyClient
+		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
 				{
@@ -238,7 +238,7 @@ func TestReconciler_Scale_Create(t *testing.T) {
 
 	// Ensure that an error occurs when creating a machine with no machine to clone.
 	t.Run("ErrNoMachineAvailable", func(t *testing.T) {
-		var client mock.FlyClient
+		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{}, nil
 		}
@@ -258,7 +258,7 @@ func TestReconciler_Scale_Create(t *testing.T) {
 func TestReconciler_Scale_Destroy(t *testing.T) {
 	t.Run("OK", func(t *testing.T) {
 		var invokeDestroyN int
-		var client mock.FlyClient
+		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
 				{ID: "1", State: fly.MachineStateStarted, Region: "iad"},
@@ -296,7 +296,7 @@ func TestReconciler_Scale_Destroy(t *testing.T) {
 
 	// Ensure we always leave at least 1 machine available so we can clone for scale up.
 	t.Run("AttemptScaleToZero", func(t *testing.T) {
-		var client mock.FlyClient
+		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
 				{ID: "1", State: fly.MachineStateStopped, Region: "iad"},
@@ -326,7 +326,7 @@ func TestReconciler_Scale_Destroy(t *testing.T) {
 func TestReconciler_Scale_Start(t *testing.T) {
 	t.Run("OK", func(t *testing.T) {
 		var invokeStartN int
-		var client mock.FlyClient
+		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
 				{ID: "1", State: fly.MachineStateStarted},
@@ -366,7 +366,7 @@ func TestReconciler_Scale_Start(t *testing.T) {
 	// Ensure that the reconciler will keep trying to start machines if one fails.
 	t.Run("Failed", func(t *testing.T) {
 		var invokeStartN int
-		var client mock.FlyClient
+		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
 				{ID: "1", State: fly.MachineStateStopped},
@@ -408,7 +408,7 @@ func TestReconciler_Scale_Start(t *testing.T) {
 // Ensure the reconciler should stop machines when they are above the max count.
 func TestReconciler_Scale_Stop(t *testing.T) {
 	t.Run("OK", func(t *testing.T) {
-		var client mock.FlyClient
+		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
 				{ID: "1", State: fly.MachineStateStarted},
@@ -440,7 +440,7 @@ func TestReconciler_Scale_Stop(t *testing.T) {
 	})
 
 	t.Run("Failed", func(t *testing.T) {
-		var client mock.FlyClient
+		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
 				{ID: "1", State: fly.MachineStateStarted},
@@ -503,7 +503,7 @@ func TestReconciler_StartStop(t *testing.T) {
 	}
 
 	// Client operates on the in-memory list of machines above.
-	var client mock.FlyClient
+	var client mock.FlapsClient
 	client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 		mu.Lock()
 		defer mu.Unlock()

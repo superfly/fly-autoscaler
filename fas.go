@@ -15,9 +15,9 @@ var (
 	ErrExprInf      = errors.New("expression returned Inf")
 )
 
-var _ FlyClient = (*flaps.Client)(nil)
+var _ FlapsClient = (*flaps.Client)(nil)
 
-type FlyClient interface {
+type FlapsClient interface {
 	List(ctx context.Context, state string) ([]*fly.Machine, error)
 	Launch(ctx context.Context, input fly.LaunchMachineInput) (*fly.Machine, error)
 	Destroy(ctx context.Context, input fly.RemoveMachineInput, nonce string) error
