@@ -16,8 +16,8 @@ import (
 
 // ServeCommand represents a command run the autoscaler server process.
 type ServeCommand struct {
-	reconciler *fas.Reconciler
-	Config     *Config
+	pool   *fas.ReconcilerPool
+	Config *Config
 }
 
 func NewServeCommand() *ServeCommand {
@@ -25,8 +25,10 @@ func NewServeCommand() *ServeCommand {
 }
 
 func (c *ServeCommand) Close() (err error) {
-	if c.reconciler != nil {
-		c.reconciler.Stop()
+	if c.pool != nil {
+		if err := c.pool.Close(); err != nil {
+			slog.Warn("failed to close reconciler pool", slog.Any("err", err))
+		}
 	}
 	return nil
 }
@@ -43,12 +45,12 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 		return err
 	}
 
-	// Instantiate client to scale up machines.
-	client, err := c.Config.NewFlapsClient(ctx)
+	// Instantiate clients for access org/apps & for scaling machines.
+	flyClient, err := c.Config.NewFlyClient(ctx)
 	if err != nil {
-		return fmt.Errorf("cannot create flaps client: %w", err)
+		return fmt.Errorf("cannot create fly client: %w", err)
 	}
-	slog.Info("connected to flaps", slog.String("app_name", c.Config.AppName))
+	slog.Info("connected to fly")
 
 	// Instantiate prometheus collector.
 	collectors, err := c.Config.NewMetricCollectors()
@@ -57,47 +59,67 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	}
 	slog.Info("metrics collectors initialized", slog.Int("n", len(collectors)))
 
-	// Instantiate and start reconcilation.
-	r := fas.NewReconciler(client)
-	r.MinCreatedMachineN = c.Config.GetMinCreatedMachineN()
-	r.MaxCreatedMachineN = c.Config.GetMaxCreatedMachineN()
-	r.MinStartedMachineN = c.Config.GetMinStartedMachineN()
-	r.MaxStartedMachineN = c.Config.GetMaxStartedMachineN()
-	r.Regions = c.Config.Regions
-	r.Interval = c.Config.Interval
-	r.Collectors = collectors
-	r.RegisterPromMetrics(prometheus.DefaultRegisterer)
-	c.reconciler = r
+	minCreatedMachineN := c.Config.GetMinCreatedMachineN()
+	maxCreatedMachineN := c.Config.GetMaxCreatedMachineN()
+	minStartedMachineN := c.Config.GetMinStartedMachineN()
+	maxStartedMachineN := c.Config.GetMaxStartedMachineN()
+
+	// Instantiate pool.
+	p := fas.NewReconcilerPool(flyClient, c.Config.Concurrency)
+	if p.NewFlapsClient, err = c.Config.NewFlapsClient(); err != nil {
+		return fmt.Errorf("cannot initialize flaps client constructor: %w", err)
+	}
+	p.NewReconciler = func() *fas.Reconciler {
+		r := fas.NewReconciler()
+		r.MinCreatedMachineN = minCreatedMachineN
+		r.MaxCreatedMachineN = maxCreatedMachineN
+		r.MinStartedMachineN = minStartedMachineN
+		r.MaxStartedMachineN = maxStartedMachineN
+		r.Regions = c.Config.Regions
+		r.Collectors = collectors
+		return r
+	}
+	p.AppName = c.Config.AppName
+	p.OrganizationSlug = c.Config.Org
+	p.ReconcileInterval = c.Config.Interval
+	p.ReconcileTimeout = c.Config.Timeout
+	p.AppListRefreshInterval = c.Config.AppListRefreshInterval
+	p.RegisterPromMetrics(prometheus.DefaultRegisterer)
+	c.pool = p
 
 	attrs := []any{
-		slog.Duration("interval", r.Interval),
-		slog.Int("collectors", len(r.Collectors)),
+		slog.Duration("interval", p.ReconcileInterval),
+		slog.Duration("timeout", p.ReconcileTimeout),
+		slog.Duration("appListRefreshInterval", p.AppListRefreshInterval),
+		slog.Int("collectors", len(collectors)),
 	}
 
-	if len(r.Regions) > 0 {
-		attrs = append(attrs, slog.Any("regions", r.Regions))
+	if regions := c.Config.Regions; len(regions) > 0 {
+		attrs = append(attrs, slog.Any("regions", regions))
 	}
 
-	if r.MinCreatedMachineN == r.MaxCreatedMachineN {
-		attrs = append(attrs, slog.String("created", r.MinCreatedMachineN))
-	} else if r.MinCreatedMachineN != "" || r.MaxCreatedMachineN != "" {
+	if minCreatedMachineN == maxCreatedMachineN {
+		attrs = append(attrs, slog.String("created", minCreatedMachineN))
+	} else if minCreatedMachineN != "" || maxCreatedMachineN != "" {
 		attrs = append(attrs, slog.Group("created",
-			slog.String("min", r.MinCreatedMachineN),
-			slog.String("max", r.MaxCreatedMachineN),
+			slog.String("min", minCreatedMachineN),
+			slog.String("max", maxCreatedMachineN),
 		))
 	}
 
-	if r.MinStartedMachineN == r.MaxStartedMachineN {
-		attrs = append(attrs, slog.String("started", r.MinStartedMachineN))
-	} else if r.MinStartedMachineN != "" || r.MaxStartedMachineN != "" {
+	if minStartedMachineN == maxStartedMachineN {
+		attrs = append(attrs, slog.String("started", minStartedMachineN))
+	} else if minStartedMachineN != "" || maxStartedMachineN != "" {
 		attrs = append(attrs, slog.Group("started",
-			slog.String("min", r.MinStartedMachineN),
-			slog.String("max", r.MaxStartedMachineN),
+			slog.String("min", minStartedMachineN),
+			slog.String("max", maxStartedMachineN),
 		))
 	}
 
-	slog.Info("reconciler initialized, beginning loop", attrs...)
-	r.Start()
+	slog.Info("reconciler pool initialized, beginning loop", attrs...)
+	if err := p.Open(); err != nil {
+		return fmt.Errorf("cannot initialize reconciler pool: %w", err)
+	}
 
 	go c.serveMetricsServer(ctx)
 

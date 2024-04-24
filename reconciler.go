@@ -2,38 +2,24 @@ package fas
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"sort"
-	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/expr-lang/expr"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/superfly/fly-go"
-)
-
-// Reconciler defaults.
-const (
-	DefaultReconcilerInterval = 15 * time.Second
 )
 
 // Reconciler represents the central part of the autoscaler that stores metrics,
 // computes the number of necessary machines, and performs scaling.
 type Reconciler struct {
-	client    FlapsClient
 	metrics   map[string]float64
 	regionSeq atomic.Int64
 
-	wg     sync.WaitGroup
-	ctx    context.Context
-	cancel context.CancelCauseFunc
-
-	// The frequency to run the reconciliation loop.
-	Interval time.Duration
+	// Client to connect to Machines API to scale app. Required.
+	Client FlapsClient
 
 	// List of regions that machines can be created in.
 	// The reconciler uses a round-robin approach to choosing next region.
@@ -55,34 +41,14 @@ type Reconciler struct {
 	Collectors []MetricCollector
 
 	// Must also be registered in RegisterPromMetrics() for visibility.
-	Stats struct {
-		// Outcomes, incremented for each reconciliation.
-		BulkCreate  atomic.Int64
-		BulkDestroy atomic.Int64
-		BulkStart   atomic.Int64
-		BulkStop    atomic.Int64
-		NoScale     atomic.Int64
-
-		// Individual machine stats.
-		MachineCreated       atomic.Int64
-		MachineCreateFailed  atomic.Int64
-		MachineDestroyed     atomic.Int64
-		MachineDestroyFailed atomic.Int64
-		MachineStarted       atomic.Int64
-		MachineStartFailed   atomic.Int64
-		MachineStopped       atomic.Int64
-		MachineStopFailed    atomic.Int64
-	}
+	Stats *ReconcilerStats
 }
 
-func NewReconciler(client FlapsClient) *Reconciler {
-	r := &Reconciler{
-		client:   client,
-		metrics:  make(map[string]float64),
-		Interval: DefaultReconcilerInterval,
+func NewReconciler() *Reconciler {
+	return &Reconciler{
+		metrics: make(map[string]float64),
+		Stats:   &ReconcilerStats{},
 	}
-	r.ctx, r.cancel = context.WithCancelCause(context.Background())
-	return r
 }
 
 // NextRegion returns the next region to launch a machine in.
@@ -94,47 +60,6 @@ func (r *Reconciler) NextRegion() string {
 
 	i := int(r.regionSeq.Add(1))
 	return r.Regions[(i-1)%len(r.Regions)]
-}
-
-// Start runs the reconciliation loop in a separate goroutine.
-func (r *Reconciler) Start() {
-	r.wg.Add(1)
-	go func() { defer r.wg.Done(); r.loop() }()
-}
-
-// Stop cancels the internal context and waits for the reconcilation loop to stop.
-func (r *Reconciler) Stop() {
-	r.cancel(errors.New("reconciler closed"))
-	r.wg.Wait()
-}
-
-func (r *Reconciler) loop() {
-	errReconciliationTimeout := fmt.Errorf("reconciliation timeout")
-
-	ticker := time.NewTicker(r.Interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-r.ctx.Done():
-			return
-		case <-ticker.C:
-			func() {
-				ctx, cancel := context.WithTimeoutCause(r.ctx, r.Interval, errReconciliationTimeout)
-				defer cancel()
-
-				if err := r.CollectMetrics(ctx); err != nil {
-					slog.Error("metrics collection failed", slog.Any("err", err))
-					return
-				}
-
-				if err := r.Reconcile(ctx); err != nil {
-					slog.Error("reconciliation failed", slog.Any("err", err))
-					return
-				}
-			}()
-		}
-	}
 }
 
 // Value returns the value of a named metric and whether the metric has been set.
@@ -150,8 +75,11 @@ func (r *Reconciler) SetValue(name string, value float64) {
 
 // CollectMetrics fetches metrics from all collectors.
 func (r *Reconciler) CollectMetrics(ctx context.Context) error {
+	// Clear all metrics before each collection as the reconciler can be shared.
+	r.metrics = make(map[string]float64)
+
 	for _, c := range r.Collectors {
-		value, err := c.CollectMetric(r.ctx)
+		value, err := c.CollectMetric(ctx)
 		if err != nil {
 			return fmt.Errorf("collect metric (%q): %w", c.Name(), err)
 		}
@@ -390,7 +318,7 @@ func (r *Reconciler) stopN(ctx context.Context, startedMachines []*fly.Machine, 
 }
 
 func (r *Reconciler) listMachines(ctx context.Context) ([]*fly.Machine, error) {
-	machines, err := r.client.List(ctx, "")
+	machines, err := r.Client.List(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +326,7 @@ func (r *Reconciler) listMachines(ctx context.Context) ([]*fly.Machine, error) {
 }
 
 func (r *Reconciler) createMachine(ctx context.Context, config *fly.MachineConfig, region string) (*fly.Machine, error) {
-	machine, err := r.client.Launch(ctx, fly.LaunchMachineInput{
+	machine, err := r.Client.Launch(ctx, fly.LaunchMachineInput{
 		Config: config,
 		Region: region,
 	})
@@ -411,7 +339,7 @@ func (r *Reconciler) createMachine(ctx context.Context, config *fly.MachineConfi
 }
 
 func (r *Reconciler) destroyMachine(ctx context.Context, id string) error {
-	if err := r.client.Destroy(ctx, fly.RemoveMachineInput{ID: id, Kill: true}, ""); err != nil {
+	if err := r.Client.Destroy(ctx, fly.RemoveMachineInput{ID: id, Kill: true}, ""); err != nil {
 		r.Stats.MachineDestroyFailed.Add(1)
 		return err
 	}
@@ -420,7 +348,7 @@ func (r *Reconciler) destroyMachine(ctx context.Context, id string) error {
 }
 
 func (r *Reconciler) startMachine(ctx context.Context, id string) error {
-	if _, err := r.client.Start(ctx, id, ""); err != nil {
+	if _, err := r.Client.Start(ctx, id, ""); err != nil {
 		r.Stats.MachineStartFailed.Add(1)
 		return err
 	}
@@ -429,7 +357,7 @@ func (r *Reconciler) startMachine(ctx context.Context, id string) error {
 }
 
 func (r *Reconciler) stopMachine(ctx context.Context, id string) error {
-	if err := r.client.Stop(ctx, fly.StopMachineInput{ID: id}, ""); err != nil {
+	if err := r.Client.Stop(ctx, fly.StopMachineInput{ID: id}, ""); err != nil {
 		r.Stats.MachineStopFailed.Add(1)
 		return err
 	}
@@ -512,98 +440,29 @@ func (r *Reconciler) evalInt(s string) (int, bool, error) {
 	return int(f), true, nil
 }
 
-func (r *Reconciler) RegisterPromMetrics(reg prometheus.Registerer) {
-	r.registerMachineStartCount(reg)
-	r.registerMachineStoppedCount(reg)
-	r.registerReconcileCount(reg)
-}
-
-func (r *Reconciler) registerMachineStartCount(reg prometheus.Registerer) {
-	const name = "fas_machine_start_count"
-
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "ok"},
-		},
-		func() float64 { return float64(r.Stats.MachineStarted.Load()) },
-	))
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "failed"},
-		},
-		func() float64 { return float64(r.Stats.MachineStartFailed.Load()) },
-	))
-}
-
-func (r *Reconciler) registerMachineStoppedCount(reg prometheus.Registerer) {
-	const name = "fas_machine_stop_count"
-
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "ok"},
-		},
-		func() float64 { return float64(r.Stats.MachineStopped.Load()) },
-	))
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "failed"},
-		},
-		func() float64 { return float64(r.Stats.MachineStopFailed.Load()) },
-	))
-}
-
-func (r *Reconciler) registerReconcileCount(reg prometheus.Registerer) {
-	const name = "fas_reconcile_count"
-
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "create"},
-		},
-		func() float64 { return float64(r.Stats.BulkCreate.Load()) },
-	))
-
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "destroy"},
-		},
-		func() float64 { return float64(r.Stats.BulkDestroy.Load()) },
-	))
-
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "start"},
-		},
-		func() float64 { return float64(r.Stats.BulkStart.Load()) },
-	))
-
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "stop"},
-		},
-		func() float64 { return float64(r.Stats.BulkStop.Load()) },
-	))
-
-	reg.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Name:        name,
-			ConstLabels: prometheus.Labels{"status": "no_scale"},
-		},
-		func() float64 { return float64(r.Stats.NoScale.Load()) },
-	))
-}
-
 func machinesByState(a []*fly.Machine) map[string][]*fly.Machine {
 	m := make(map[string][]*fly.Machine)
 	for _, mach := range a {
 		m[mach.State] = append(m[mach.State], mach)
 	}
 	return m
+}
+
+type ReconcilerStats struct {
+	// Outcomes, incremented for each reconciliation.
+	BulkCreate  atomic.Int64
+	BulkDestroy atomic.Int64
+	BulkStart   atomic.Int64
+	BulkStop    atomic.Int64
+	NoScale     atomic.Int64
+
+	// Individual machine stats.
+	MachineCreated       atomic.Int64
+	MachineCreateFailed  atomic.Int64
+	MachineDestroyed     atomic.Int64
+	MachineDestroyFailed atomic.Int64
+	MachineStarted       atomic.Int64
+	MachineStartFailed   atomic.Int64
+	MachineStopped       atomic.Int64
+	MachineStopFailed    atomic.Int64
 }
