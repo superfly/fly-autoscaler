@@ -285,14 +285,14 @@ func (p *ReconcilerPool) monitorReconciler(ctx context.Context, r *Reconciler) {
 				slog.Error("metrics collection failed",
 					slog.String("app", info.name),
 					slog.Any("err", err))
-				return
+				continue
 			}
 
 			if err := r.Reconcile(ctx); err != nil {
 				slog.Error("reconciliation failed",
 					slog.String("app", info.name),
 					slog.Any("err", err))
-				return
+				continue
 			}
 
 		}
