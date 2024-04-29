@@ -129,9 +129,10 @@ type Config struct {
 
 func NewConfig() *Config {
 	return &Config{
-		Concurrency: fas.DefaultConcurrency,
-		Interval:    fas.DefaultReconcileInterval,
-		Timeout:     fas.DefaultReconcileTimeout,
+		Concurrency:            fas.DefaultConcurrency,
+		Interval:               fas.DefaultReconcileInterval,
+		Timeout:                fas.DefaultReconcileTimeout,
+		AppListRefreshInterval: fas.DefaultAppListRefreshInterval,
 	}
 }
 
