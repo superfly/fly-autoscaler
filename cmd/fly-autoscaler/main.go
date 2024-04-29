@@ -28,7 +28,13 @@ var (
 	Commit  = ""
 )
 
+const (
+	APIBaseURL = "https://api.fly.io"
+)
+
 func main() {
+	fly.SetBaseURL(APIBaseURL)
+
 	if err := run(context.Background(), os.Args[1:]); err == flag.ErrHelp {
 		os.Exit(2)
 	} else if err != nil {
