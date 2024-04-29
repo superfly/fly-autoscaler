@@ -70,12 +70,14 @@ func (c *MetricCollector) Name() string {
 	return c.name
 }
 
-func (c *MetricCollector) CollectMetric(ctx context.Context) (float64, error) {
+func (c *MetricCollector) CollectMetric(ctx context.Context, app string) (float64, error) {
 	// Append additional query filter, if specified.
 	query := `ExecutionStatus="Running"`
 	if c.Query != "" {
 		query += " AND (" + c.Query + ")"
 	}
+
+	query = fas.ExpandMetricQuery(ctx, query, app)
 
 	resp, err := c.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{
 		Query: query,

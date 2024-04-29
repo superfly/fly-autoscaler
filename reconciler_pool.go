@@ -278,6 +278,7 @@ func (p *ReconcilerPool) monitorReconciler(ctx context.Context, r *Reconciler) {
 			ctx, cancel := context.WithTimeoutCause(p.ctx, p.ReconcileTimeout, errReconciliationTimeout)
 			defer cancel()
 
+			r.AppName = info.name
 			r.Client = info.client
 
 			if err := r.CollectMetrics(ctx); err != nil {

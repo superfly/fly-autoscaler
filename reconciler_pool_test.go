@@ -113,7 +113,7 @@ func TestReconcilerPool_Run_SingleApp(t *testing.T) {
 	// Collector will simply mirror the target value.
 	var target atomic.Int64
 	collector := mock.NewMetricCollector("target")
-	collector.CollectMetricFunc = func(ctx context.Context) (float64, error) {
+	collector.CollectMetricFunc = func(ctx context.Context, app string) (float64, error) {
 		return float64(target.Load()), nil
 	}
 

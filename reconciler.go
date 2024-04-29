@@ -21,6 +21,9 @@ type Reconciler struct {
 	// Client to connect to Machines API to scale app. Required.
 	Client FlapsClient
 
+	// The name of the app currently being reconciled.
+	AppName string
+
 	// List of regions that machines can be created in.
 	// The reconciler uses a round-robin approach to choosing next region.
 	Regions []string
@@ -79,7 +82,7 @@ func (r *Reconciler) CollectMetrics(ctx context.Context) error {
 	r.metrics = make(map[string]float64)
 
 	for _, c := range r.Collectors {
-		value, err := c.CollectMetric(ctx)
+		value, err := c.CollectMetric(ctx, r.AppName)
 		if err != nil {
 			return fmt.Errorf("collect metric (%q): %w", c.Name(), err)
 		}
