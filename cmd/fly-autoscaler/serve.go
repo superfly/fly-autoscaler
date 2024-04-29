@@ -88,9 +88,9 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	c.pool = p
 
 	attrs := []any{
-		slog.Duration("interval", p.ReconcileInterval),
-		slog.Duration("timeout", p.ReconcileTimeout),
-		slog.Duration("appListRefreshInterval", p.AppListRefreshInterval),
+		slog.String("interval", p.ReconcileInterval.String()),
+		slog.String("timeout", p.ReconcileTimeout.String()),
+		slog.String("appListRefreshInterval", p.AppListRefreshInterval.String()),
 		slog.Int("collectors", len(collectors)),
 	}
 
