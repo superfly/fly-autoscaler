@@ -122,6 +122,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 
 	// Log out stats so we know exactly what the state of the world is.
 	slog.Info("reconciling",
+		slog.String("app", r.AppName),
 		slog.Group("current",
 			slog.Int("started", len(m[fly.MachineStateStarted])),
 			slog.Int("stopped", len(m[fly.MachineStateStopped])),
@@ -170,7 +171,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, defaultRegion string, n int) error {
 	r.Stats.BulkCreate.Add(1)
 
-	slog.Info("begin bulk create")
+	logger := slog.With(slog.String("app", r.AppName))
+	logger.Info("begin bulk create")
 
 	// Attempt to start as many machines as needed.
 	remaining := n
@@ -184,11 +186,11 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 
 		machine, err := r.createMachine(ctx, config, region)
 		if err != nil {
-			slog.Error("cannot create machine, skipping", slog.Any("err", err))
+			logger.Error("cannot create machine, skipping", slog.Any("err", err))
 			continue
 		}
 
-		slog.Info("machine created",
+		logger.Info("machine created",
 			slog.String("id", machine.ID),
 			slog.String("region", machine.Region))
 
@@ -196,7 +198,7 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 	}
 
 	newlyCreatedN := n - remaining
-	slog.Info("bulk create completed", slog.Int("n", newlyCreatedN))
+	logger.Info("bulk create completed", slog.Int("n", newlyCreatedN))
 
 	return nil
 }
@@ -204,7 +206,8 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 func (r *Reconciler) destroyN(ctx context.Context, machinesByState map[string][]*fly.Machine, n int) error {
 	r.Stats.BulkDestroy.Add(1)
 
-	slog.Info("begin bulk destroy")
+	logger := slog.With(slog.String("app", r.AppName))
+	logger.Info("begin bulk destroy")
 
 	// Attempt to destroy as many machines as needed.
 	remaining := n
@@ -215,12 +218,12 @@ func (r *Reconciler) destroyN(ctx context.Context, machinesByState map[string][]
 		}
 
 		if err := r.destroyMachine(ctx, machine.ID); err != nil {
-			slog.Error("cannot destroy machine, skipping", slog.Any("err", err))
+			logger.Error("cannot destroy machine, skipping", slog.Any("err", err))
 			remaining-- // don't retry so we don't kill too many machines
 			continue
 		}
 
-		slog.Info("machine destroyed",
+		logger.Info("machine destroyed",
 			slog.String("id", machine.ID),
 			slog.String("region", machine.Region))
 
@@ -228,7 +231,7 @@ func (r *Reconciler) destroyN(ctx context.Context, machinesByState map[string][]
 	}
 
 	newlyDestroyedN := n - remaining
-	slog.Info("bulk destroy completed", slog.Int("n", newlyDestroyedN))
+	logger.Info("bulk destroy completed", slog.Int("n", newlyDestroyedN))
 
 	return nil
 }
@@ -254,11 +257,12 @@ func chooseNextDestroyCandidate(m map[string][]*fly.Machine) *fly.Machine {
 func (r *Reconciler) startN(ctx context.Context, stoppedMachines []*fly.Machine, n int) error {
 	r.Stats.BulkStart.Add(1)
 
-	slog.Info("begin bulk start")
+	logger := slog.With(slog.String("app", r.AppName))
+	logger.Info("begin bulk start")
 
 	// Let the user know if we don't have enough machines to reach the target count.
 	if len(stoppedMachines) < n {
-		slog.Warn("not enough stopped machines available to reach target, please create more machines")
+		logger.Warn("not enough stopped machines available to reach target, please create more machines")
 	}
 
 	// Sort stopped machines by an arbitrary value (ID) so results are deterministic.
@@ -272,18 +276,18 @@ func (r *Reconciler) startN(ctx context.Context, stoppedMachines []*fly.Machine,
 		}
 
 		if err := r.startMachine(ctx, machine.ID); err != nil {
-			slog.Error("cannot start machine, skipping",
+			logger.Error("cannot start machine, skipping",
 				slog.String("id", machine.ID),
 				slog.Any("err", err))
 			continue
 		}
 
-		slog.Info("machine started", slog.String("id", machine.ID))
+		logger.Info("machine started", slog.String("id", machine.ID))
 		remaining--
 	}
 
 	newlyStartedN := n - remaining
-	slog.Info("bulk start completed", slog.Int("n", newlyStartedN))
+	logger.Info("bulk start completed", slog.Int("n", newlyStartedN))
 
 	return nil
 }
@@ -291,7 +295,8 @@ func (r *Reconciler) startN(ctx context.Context, stoppedMachines []*fly.Machine,
 func (r *Reconciler) stopN(ctx context.Context, startedMachines []*fly.Machine, n int) error {
 	r.Stats.BulkStop.Add(1)
 
-	slog.Info("begin bulk stop")
+	logger := slog.With(slog.String("app", r.AppName))
+	logger.Info("begin bulk stop")
 
 	// Sort stopped machines by an arbitrary value (ID) so results are deterministic.
 	sort.Slice(startedMachines, func(i, j int) bool { return startedMachines[i].ID < startedMachines[j].ID })
@@ -304,18 +309,18 @@ func (r *Reconciler) stopN(ctx context.Context, startedMachines []*fly.Machine, 
 		}
 
 		if err := r.stopMachine(ctx, machine.ID); err != nil {
-			slog.Error("cannot stop machine, skipping",
+			logger.Error("cannot stop machine, skipping",
 				slog.String("id", machine.ID),
 				slog.Any("err", err))
 			continue
 		}
 
-		slog.Info("machine stopped", slog.String("id", machine.ID))
+		logger.Info("machine stopped", slog.String("id", machine.ID))
 		remaining--
 	}
 
 	newlyStoppedN := n - remaining
-	slog.Info("bulk stop completed", slog.Int("n", newlyStoppedN))
+	logger.Info("bulk stop completed", slog.Int("n", newlyStoppedN))
 
 	return nil
 }
