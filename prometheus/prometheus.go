@@ -42,8 +42,10 @@ func (c *MetricCollector) Name() string {
 	return c.name
 }
 
-func (c *MetricCollector) CollectMetric(ctx context.Context) (float64, error) {
-	result, warnings, err := c.api.Query(context.Background(), c.query, time.Now())
+func (c *MetricCollector) CollectMetric(ctx context.Context, app string) (float64, error) {
+	query := fas.ExpandMetricQuery(ctx, c.query, app)
+
+	result, warnings, err := c.api.Query(context.Background(), query, time.Now())
 	if err != nil {
 		return 0, err
 	} else if len(warnings) > 0 {

@@ -15,12 +15,21 @@ var (
 	ErrExprInf      = errors.New("expression returned Inf")
 )
 
-var _ FlyClient = (*flaps.Client)(nil)
+var _ FlyClient = (*fly.Client)(nil)
 
 type FlyClient interface {
+	GetOrganizationBySlug(ctx context.Context, slug string) (*fly.Organization, error)
+	GetAppsForOrganization(ctx context.Context, orgID string) ([]fly.App, error)
+}
+
+var _ FlapsClient = (*flaps.Client)(nil)
+
+type FlapsClient interface {
 	List(ctx context.Context, state string) ([]*fly.Machine, error)
 	Launch(ctx context.Context, input fly.LaunchMachineInput) (*fly.Machine, error)
 	Destroy(ctx context.Context, input fly.RemoveMachineInput, nonce string) error
 	Start(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error)
 	Stop(ctx context.Context, in fly.StopMachineInput, nonce string) error
 }
+
+type NewFlapsClientFunc func(ctx context.Context, appName string) (FlapsClient, error)

@@ -9,12 +9,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
 	fas "github.com/superfly/fly-autoscaler"
 	fasprom "github.com/superfly/fly-autoscaler/prometheus"
 	"github.com/superfly/fly-autoscaler/temporal"
+	fly "github.com/superfly/fly-go"
 	"github.com/superfly/fly-go/flaps"
 	"github.com/superfly/fly-go/tokens"
 	"gopkg.in/yaml.v3"
@@ -26,7 +28,13 @@ var (
 	Commit  = ""
 )
 
+const (
+	APIBaseURL = "https://api.fly.io"
+)
+
 func main() {
+	fly.SetBaseURL(APIBaseURL)
+
 	if err := run(context.Background(), os.Args[1:]); err == flag.ErrHelp {
 		os.Exit(2)
 	} else if err != nil {
@@ -106,30 +114,38 @@ func registerConfigPathFlag(fs *flag.FlagSet) *string {
 }
 
 type Config struct {
-	AppName            string        `yaml:"app-name"`
-	Regions            []string      `yaml:"regions"`
-	CreatedMachineN    string        `yaml:"created-machine-count"`
-	MinCreatedMachineN string        `yaml:"min-created-machine-count"`
-	MaxCreatedMachineN string        `yaml:"max-created-machine-count"`
-	StartedMachineN    string        `yaml:"started-machine-count"`
-	MinStartedMachineN string        `yaml:"min-started-machine-count"`
-	MaxStartedMachineN string        `yaml:"max-started-machine-count"`
-	Interval           time.Duration `yaml:"interval"`
-	APIToken           string        `yaml:"api-token"`
-	Verbose            bool          `yaml:"verbose"`
+	AppName                string        `yaml:"app-name"`
+	Org                    string        `yaml:"org"`
+	Regions                []string      `yaml:"regions"`
+	CreatedMachineN        string        `yaml:"created-machine-count"`
+	MinCreatedMachineN     string        `yaml:"min-created-machine-count"`
+	MaxCreatedMachineN     string        `yaml:"max-created-machine-count"`
+	StartedMachineN        string        `yaml:"started-machine-count"`
+	MinStartedMachineN     string        `yaml:"min-started-machine-count"`
+	MaxStartedMachineN     string        `yaml:"max-started-machine-count"`
+	Concurrency            int           `yaml:"concurrency"`
+	Interval               time.Duration `yaml:"interval"`
+	Timeout                time.Duration `yaml:"timeout"`
+	AppListRefreshInterval time.Duration `yaml:"app-list-refresh-interval"`
+	APIToken               string        `yaml:"api-token"`
+	Verbose                bool          `yaml:"verbose"`
 
 	MetricCollectors []*MetricCollectorConfig `yaml:"metric-collectors"`
 }
 
 func NewConfig() *Config {
 	return &Config{
-		Interval: fas.DefaultReconcilerInterval,
+		Concurrency:            fas.DefaultConcurrency,
+		Interval:               fas.DefaultReconcileInterval,
+		Timeout:                fas.DefaultReconcileTimeout,
+		AppListRefreshInterval: fas.DefaultAppListRefreshInterval,
 	}
 }
 
-func NewConfigFromEnv() (*Config, error) {
+func NewConfigFromEnv() (_ *Config, err error) {
 	c := NewConfig()
 	c.AppName = os.Getenv("FAS_APP_NAME")
+	c.Org = os.Getenv("FAS_ORG")
 	c.CreatedMachineN = os.Getenv("FAS_CREATED_MACHINE_COUNT")
 	c.MinCreatedMachineN = os.Getenv("FAS_MIN_CREATED_MACHINE_COUNT")
 	c.MaxCreatedMachineN = os.Getenv("FAS_MAX_CREATED_MACHINE_COUNT")
@@ -142,12 +158,26 @@ func NewConfigFromEnv() (*Config, error) {
 		c.Regions = strings.Split(s, ",")
 	}
 
+	if s := os.Getenv("FAS_CONCURRENCY"); s != "" {
+		if c.Concurrency, err = strconv.Atoi(s); err != nil {
+			return nil, fmt.Errorf("cannot parse FAS_CONCURRENCY as integer: %q", s)
+		}
+	}
+
 	if s := os.Getenv("FAS_INTERVAL"); s != "" {
-		d, err := time.ParseDuration(s)
-		if err != nil {
+		if c.Interval, err = time.ParseDuration(s); err != nil {
 			return nil, fmt.Errorf("cannot parse FAS_INTERVAL as duration: %q", s)
 		}
-		c.Interval = d
+	}
+	if s := os.Getenv("FAS_TIMEOUT"); s != "" {
+		if c.Timeout, err = time.ParseDuration(s); err != nil {
+			return nil, fmt.Errorf("cannot parse FAS_TIMEOUT as duration: %q", s)
+		}
+	}
+	if s := os.Getenv("FAS_APP_LIST_REFRESH_INTERVAL"); s != "" {
+		if c.AppListRefreshInterval, err = time.ParseDuration(s); err != nil {
+			return nil, fmt.Errorf("cannot parse FAS_APP_LIST_REFRESH_INTERVAL as duration: %q", s)
+		}
 	}
 
 	if addr := os.Getenv("FAS_PROMETHEUS_ADDRESS"); addr != "" {
@@ -278,15 +308,28 @@ func (c *Config) validateStartedMachineCount() error {
 	return nil
 }
 
-func (c *Config) NewFlapsClient(ctx context.Context) (*flaps.Client, error) {
+func (c *Config) NewFlyClient(ctx context.Context) (*fly.Client, error) {
 	if c.APIToken == "" {
 		return nil, fmt.Errorf("api token required")
 	}
 
-	return flaps.NewWithOptions(ctx, flaps.NewClientOpts{
-		AppName: c.AppName,
-		Tokens:  tokens.Parse(c.APIToken),
-	})
+	return fly.NewClientFromOptions(fly.ClientOptions{
+		Tokens: tokens.Parse(c.APIToken),
+	}), nil
+}
+
+func (c *Config) NewFlapsClient() (fas.NewFlapsClientFunc, error) {
+	if c.APIToken == "" {
+		return nil, fmt.Errorf("api token required")
+	}
+	tok := tokens.Parse(c.APIToken)
+
+	return func(ctx context.Context, appName string) (fas.FlapsClient, error) {
+		return flaps.NewWithOptions(ctx, flaps.NewClientOpts{
+			AppName: appName,
+			Tokens:  tok,
+		})
+	}, nil
 }
 
 func (c *Config) NewMetricCollectors() ([]fas.MetricCollector, error) {

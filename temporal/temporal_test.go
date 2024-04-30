@@ -34,7 +34,7 @@ func TestMetricCollector_CollectMetric(t *testing.T) {
 	}
 
 	t.Log("querying metric")
-	if v, err := c.CollectMetric(context.Background()); err != nil {
+	if v, err := c.CollectMetric(context.Background(), "myapp"); err != nil {
 		t.Fatal(err)
 	} else if got, want := v, 2.0; got != want {
 		t.Fatalf("metric=%v, want %v", got, want)

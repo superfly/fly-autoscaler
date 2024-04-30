@@ -10,7 +10,7 @@ var _ fas.MetricCollector = (*MetricCollector)(nil)
 
 type MetricCollector struct {
 	name              string
-	CollectMetricFunc func(ctx context.Context) (float64, error)
+	CollectMetricFunc func(ctx context.Context, app string) (float64, error)
 }
 
 func NewMetricCollector(name string) *MetricCollector {
@@ -19,6 +19,6 @@ func NewMetricCollector(name string) *MetricCollector {
 
 func (c *MetricCollector) Name() string { return c.name }
 
-func (c *MetricCollector) CollectMetric(ctx context.Context) (float64, error) {
-	return c.CollectMetricFunc(ctx)
+func (c *MetricCollector) CollectMetric(ctx context.Context, app string) (float64, error) {
+	return c.CollectMetricFunc(ctx, app)
 }

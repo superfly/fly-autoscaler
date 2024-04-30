@@ -33,7 +33,8 @@ func (c *EvalCommand) Run(ctx context.Context, args []string) (err error) {
 	}
 
 	// Instantiate reconciler and evaluate once.
-	r := fas.NewReconciler(nil)
+	r := fas.NewReconciler()
+	r.AppName = c.Config.AppName
 	r.MinCreatedMachineN = c.Config.GetMinCreatedMachineN()
 	r.MaxCreatedMachineN = c.Config.GetMaxCreatedMachineN()
 	r.MinStartedMachineN = c.Config.GetMinStartedMachineN()
