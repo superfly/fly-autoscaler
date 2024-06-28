@@ -76,7 +76,7 @@ func run(ctx context.Context, args []string) error {
 			printUsage()
 			return flag.ErrHelp
 		}
-		return fmt.Errorf("litefs %s: unknown command", cmd)
+		return fmt.Errorf("fly-autoscaler %s: unknown command", cmd)
 	}
 }
 
