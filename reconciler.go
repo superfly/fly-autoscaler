@@ -40,6 +40,9 @@ type Reconciler struct {
 	MinStartedMachineN string
 	MaxStartedMachineN string
 
+	// Initial machine state (started or stopped)
+	InitialMachineState string
+
 	// List of collectors to fetch metric values from.
 	Collectors []MetricCollector
 
@@ -335,8 +338,9 @@ func (r *Reconciler) listMachines(ctx context.Context) ([]*fly.Machine, error) {
 
 func (r *Reconciler) createMachine(ctx context.Context, config *fly.MachineConfig, region string) (*fly.Machine, error) {
 	machine, err := r.Client.Launch(ctx, fly.LaunchMachineInput{
-		Config: config,
-		Region: region,
+		Config:     config,
+		Region:     region,
+		SkipLaunch: r.InitialMachineState == fly.MachineStateStopped,
 	})
 	if err != nil {
 		r.Stats.MachineCreateFailed.Add(1)
