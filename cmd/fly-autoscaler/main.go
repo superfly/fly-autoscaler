@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +121,7 @@ type Config struct {
 	CreatedMachineN        string        `yaml:"created-machine-count"`
 	MinCreatedMachineN     string        `yaml:"min-created-machine-count"`
 	MaxCreatedMachineN     string        `yaml:"max-created-machine-count"`
+	InitialMachineState    string        `yaml:"initial-machine-state"`
 	StartedMachineN        string        `yaml:"started-machine-count"`
 	MinStartedMachineN     string        `yaml:"min-started-machine-count"`
 	MaxStartedMachineN     string        `yaml:"max-started-machine-count"`
@@ -149,6 +151,7 @@ func NewConfigFromEnv() (_ *Config, err error) {
 	c.CreatedMachineN = os.Getenv("FAS_CREATED_MACHINE_COUNT")
 	c.MinCreatedMachineN = os.Getenv("FAS_MIN_CREATED_MACHINE_COUNT")
 	c.MaxCreatedMachineN = os.Getenv("FAS_MAX_CREATED_MACHINE_COUNT")
+	c.InitialMachineState = os.Getenv("FAS_INITIAL_MACHINE_STATE")
 	c.StartedMachineN = os.Getenv("FAS_STARTED_MACHINE_COUNT")
 	c.MinStartedMachineN = os.Getenv("FAS_MIN_STARTED_MACHINE_COUNT")
 	c.MaxStartedMachineN = os.Getenv("FAS_MAX_STARTED_MACHINE_COUNT")
@@ -156,6 +159,10 @@ func NewConfigFromEnv() (_ *Config, err error) {
 
 	if s := os.Getenv("FAS_REGIONS"); s != "" {
 		c.Regions = strings.Split(s, ",")
+	}
+
+	if c.InitialMachineState == "" {
+		c.InitialMachineState = fly.MachineStateStarted
 	}
 
 	if s := os.Getenv("FAS_CONCURRENCY"); s != "" {
@@ -264,6 +271,10 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateStartedMachineCount(); err != nil {
 		return err
+	}
+
+	if !slices.Contains([]string{fly.MachineStateStarted, fly.MachineStateStopped}, c.InitialMachineState) {
+		return fmt.Errorf("initial machine state must be either 'started' or 'stopped'")
 	}
 
 	for i, collectorConfig := range c.MetricCollectors {
