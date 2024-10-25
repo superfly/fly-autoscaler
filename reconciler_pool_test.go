@@ -77,6 +77,9 @@ func TestReconcilerPool_Run_SingleApp(t *testing.T) {
 			{Name: "my-app-1"},
 		}, nil
 	}
+	flyClient.GetAppCurrentReleaseMachinesFunc = func(ctx context.Context, appName string) (*fly.Release, error) {
+		return &fly.Release{InProgress: false, Status: "completed"}, nil
+	}
 
 	// Client operates on the in-memory list of machines above.
 	var flapsClient mock.FlapsClient

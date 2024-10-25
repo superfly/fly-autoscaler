@@ -281,6 +281,21 @@ func (p *ReconcilerPool) monitorReconciler(ctx context.Context, r *Reconciler) {
 			r.AppName = info.name
 			r.Client = info.client
 
+			release, err := p.flyClient.GetAppCurrentReleaseMachines(ctx, info.name)
+			if err != nil {
+				slog.Error("get current release failed",
+					slog.String("app", info.name),
+					slog.Any("err", err))
+				continue
+			}
+
+			if release.Status == "running" {
+				slog.Warn("release in progress, skipping reconciliation",
+					slog.String("app", r.AppName),
+				)
+				continue
+			}
+
 			if err := r.CollectMetrics(ctx); err != nil {
 				slog.Error("metrics collection failed",
 					slog.String("app", info.name),

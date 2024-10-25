@@ -20,6 +20,7 @@ var _ FlyClient = (*fly.Client)(nil)
 type FlyClient interface {
 	GetOrganizationBySlug(ctx context.Context, slug string) (*fly.Organization, error)
 	GetAppsForOrganization(ctx context.Context, orgID string) ([]fly.App, error)
+	GetAppCurrentReleaseMachines(ctx context.Context, appName string) (*fly.Release, error)
 }
 
 var _ FlapsClient = (*flaps.Client)(nil)
