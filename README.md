@@ -1,5 +1,4 @@
-Fly Autoscaler
-==============
+# Fly Autoscaler
 
 The project is a metrics-based autoscaler for Fly.io. The autoscaler supports
 polling for metrics from a Prometheus instance and then computing the number of
@@ -19,20 +18,19 @@ interval. By default, it runs every 15 seconds.
 4. If the target number of machines is less than the number of `started`
    machines, use the Fly Machines API to start new machines.
 
-
 ```
                                      ┌────────────────────┐
 fly-autoscaler ──────────┐           │                    │
 │ ┌────────────────────┐ │    ┌──────│     Prometheus     │
 │ │                    │ │    │      │                    │
 │ │  Metric Collector  │◀┼────┘      └────────────────────┘
-│ │                    │ │                                 
-│ └──────┬─────────────┘ │                                 
-│        │     △         │                                 
-│        ▽     │         │                                 
-│ ┌────────────┴───────┐ │                                 
-│ │                    │ │                                 
-│ │     Reconciler     │◀┼────┐                            
+│ │                    │ │
+│ └──────┬─────────────┘ │
+│        │     △         │
+│        ▽     │         │
+│ ┌────────────┴───────┐ │
+│ │                    │ │
+│ │     Reconciler     │◀┼────┐
 │ │                    │ │    │      ┌────────────────────┐
 │ └────────────────────┘ │    │      │                    │
 └────────────────────────┘    └─────▶│  Fly Machines API  │
@@ -54,12 +52,11 @@ items at a time, you can compute the number of machines as:
 ceil(queue_depth / 10)
 ```
 
-The autoscaler can only start machines so it will never exceed the number of 
+The autoscaler can only start machines so it will never exceed the number of
 machines available for a Fly app.
 
 [Expr]: https://expr-lang.org/
 [Expr Language Definition]: https://expr-lang.org/docs/language-definition
-
 
 ## Usage
 
@@ -93,7 +90,6 @@ port = 9090
 path = "/metrics"
 ```
 
-
 ### Create a deploy token
 
 Next, set up a new deploy token for the application you want to scale:
@@ -107,7 +103,6 @@ Set the token as a secret on your application:
 ```
 $ fly secrets set FAS_API_TOKEN="FlyV1 ..."
 ```
-
 
 ### Create a read-only token
 
@@ -133,7 +128,6 @@ $ fly deploy
 
 This should create a new machine and start it with the `fly-autoscaler` server
 running.
-
 
 ### Testing your metrics & expression
 

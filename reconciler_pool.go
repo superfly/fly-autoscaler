@@ -18,6 +18,7 @@ const (
 	DefaultReconcileTimeout       = 30 * time.Second
 	DefaultReconcileInterval      = 15 * time.Second
 	DefaultAppListRefreshInterval = 60 * time.Second
+	DefaultProcessGroup           = "app"
 )
 
 // ReconcilerPool represents a set of reconcilers that act as a worker pool.

@@ -49,6 +49,7 @@ func TestReconcilerPool_Run_SingleApp(t *testing.T) {
 	}
 
 	var mu sync.Mutex
+
 	machines := []*fly.Machine{
 		{ID: "1", State: fly.MachineStateStopped},
 		{ID: "2", State: fly.MachineStateStopped},

@@ -118,6 +118,7 @@ type Config struct {
 	AppName                string        `yaml:"app-name"`
 	Org                    string        `yaml:"org"`
 	Regions                []string      `yaml:"regions"`
+	ProcessGroup           string        `yaml:"process-group"`
 	CreatedMachineN        string        `yaml:"created-machine-count"`
 	MinCreatedMachineN     string        `yaml:"min-created-machine-count"`
 	MaxCreatedMachineN     string        `yaml:"max-created-machine-count"`
@@ -141,6 +142,7 @@ func NewConfig() *Config {
 		Interval:               fas.DefaultReconcileInterval,
 		Timeout:                fas.DefaultReconcileTimeout,
 		AppListRefreshInterval: fas.DefaultAppListRefreshInterval,
+		ProcessGroup:           fas.DefaultProcessGroup,
 	}
 }
 
@@ -156,6 +158,10 @@ func NewConfigFromEnv() (_ *Config, err error) {
 	c.MinStartedMachineN = os.Getenv("FAS_MIN_STARTED_MACHINE_COUNT")
 	c.MaxStartedMachineN = os.Getenv("FAS_MAX_STARTED_MACHINE_COUNT")
 	c.APIToken = os.Getenv("FAS_API_TOKEN")
+
+	if s := os.Getenv("FAS_PROCESS_GROUP"); s != "" {
+		c.ProcessGroup = s
+	}
 
 	if s := os.Getenv("FAS_REGIONS"); s != "" {
 		c.Regions = strings.Split(s, ",")
