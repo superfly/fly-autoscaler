@@ -28,6 +28,9 @@ type Reconciler struct {
 	// The reconciler uses a round-robin approach to choosing next region.
 	Regions []string
 
+	// The process group that the reconciler should watch.
+	ProcessGroup string
+
 	// Expression used for calculating the number of created machines.
 	// If current number is less than min, more machines will be created.
 	// If current number is more than max, machines will be destroyed.
@@ -121,7 +124,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list machines: %w", err)
 	}
-	m := machinesByState(machines)
+
+	filtered := machinesInGroup(machines, r.ProcessGroup)
+	m := machinesByState(filtered)
 
 	// Log out stats so we know exactly what the state of the world is.
 	slog.Info("reconciling",
@@ -456,6 +461,17 @@ func machinesByState(a []*fly.Machine) map[string][]*fly.Machine {
 	m := make(map[string][]*fly.Machine)
 	for _, mach := range a {
 		m[mach.State] = append(m[mach.State], mach)
+	}
+	return m
+}
+
+func machinesInGroup(machines []*fly.Machine, group string) []*fly.Machine {
+	var m []*fly.Machine
+	for _, mach := range machines {
+		g := mach.ProcessGroup()
+		if g == group {
+			m = append(m, mach)
+		}
 	}
 	return m
 }

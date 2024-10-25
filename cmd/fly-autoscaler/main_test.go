@@ -28,6 +28,9 @@ func TestConfig_Parse(t *testing.T) {
 	if got, want := config.Verbose, false; got != want {
 		t.Fatalf("Verbose=%v, want %v", got, want)
 	}
+	if got, want := config.ProcessGroup, "app"; got != want {
+		t.Fatalf("ProcessGroup=%v, want %v", got, want)
+	}
 
 	mc := config.MetricCollectors[0]
 	if got, want := mc.Type, "prometheus"; got != want {
