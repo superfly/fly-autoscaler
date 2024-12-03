@@ -153,8 +153,8 @@ func TestReconciler_Scale_NoScale(t *testing.T) {
 	var client mock.FlapsClient
 	client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 		return []*fly.Machine{
-			{ID: "1", State: fly.MachineStateStarted},
-			{ID: "2", State: fly.MachineStateStopped},
+			{ID: "1", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+			{ID: "2", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
 		}, nil
 	}
 	client.StartFunc = func(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error) {
@@ -187,6 +187,7 @@ func TestReconciler_Scale_Create(t *testing.T) {
 					Config: &fly.MachineConfig{
 						Metadata: map[string]string{"foo": "bar"},
 					},
+					HostStatus: fly.HostStatusOk,
 				},
 				{
 					ID:     "2",
@@ -195,6 +196,13 @@ func TestReconciler_Scale_Create(t *testing.T) {
 					Config: &fly.MachineConfig{
 						Metadata: map[string]string{"baz": "bat"},
 					},
+					HostStatus: fly.HostStatusOk,
+				},
+				{
+					ID:     "3",
+					State:  fly.MachineStateDestroying,
+					Region: "den",
+					Config: nil,
 				},
 			}, nil
 		}
@@ -260,10 +268,10 @@ func TestReconciler_Scale_Destroy(t *testing.T) {
 		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
-				{ID: "1", State: fly.MachineStateStarted, Region: "iad"},
-				{ID: "2", State: fly.MachineStateStopped, Region: "den"},
-				{ID: "3", State: fly.MachineStateStopped, Region: "iad"},
-				{ID: "4", State: fly.MachineStateStopped, Region: "mad"},
+				{ID: "1", State: fly.MachineStateStarted, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStopped, Region: "den", HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStopped, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "4", State: fly.MachineStateStopped, Region: "mad", HostStatus: fly.HostStatusOk},
 			}, nil
 		}
 		client.DestroyFunc = func(ctx context.Context, input fly.RemoveMachineInput, nonce string) error {
@@ -299,10 +307,10 @@ func TestReconciler_Scale_Destroy(t *testing.T) {
 		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
-				{ID: "1", State: fly.MachineStateStopped, Region: "iad"},
-				{ID: "2", State: fly.MachineStateStopped, Region: "iad"},
-				{ID: "3", State: fly.MachineStateStarted, Region: "iad"},
-				{ID: "4", State: fly.MachineStateCreated, Region: "iad"},
+				{ID: "1", State: fly.MachineStateStopped, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStopped, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStarted, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "4", State: fly.MachineStateCreated, Region: "iad", HostStatus: fly.HostStatusOk},
 			}, nil
 		}
 		client.DestroyFunc = func(ctx context.Context, input fly.RemoveMachineInput, nonce string) error {
@@ -330,10 +338,10 @@ func TestReconciler_Scale_Start(t *testing.T) {
 		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
-				{ID: "1", State: fly.MachineStateStarted},
-				{ID: "2", State: fly.MachineStateStopped},
-				{ID: "3", State: fly.MachineStateStopped},
-				{ID: "4", State: fly.MachineStateStopped},
+				{ID: "1", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+				{ID: "4", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
 			}, nil
 		}
 		client.StartFunc = func(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error) {
@@ -371,10 +379,10 @@ func TestReconciler_Scale_Start(t *testing.T) {
 		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
-				{ID: "1", State: fly.MachineStateStopped},
-				{ID: "2", State: fly.MachineStateStopped},
-				{ID: "3", State: fly.MachineStateStopped},
-				{ID: "4", State: fly.MachineStateStopped},
+				{ID: "1", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+				{ID: "4", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
 			}, nil
 		}
 		client.StartFunc = func(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error) {
@@ -414,10 +422,10 @@ func TestReconciler_Scale_Stop(t *testing.T) {
 		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
-				{ID: "1", State: fly.MachineStateStarted},
-				{ID: "2", State: fly.MachineStateStarted},
-				{ID: "3", State: fly.MachineStateStarted},
-				{ID: "4", State: fly.MachineStateStopped},
+				{ID: "1", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+				{ID: "4", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
 			}, nil
 		}
 		client.StopFunc = func(ctx context.Context, in fly.StopMachineInput, nonce string) error {
@@ -447,10 +455,10 @@ func TestReconciler_Scale_Stop(t *testing.T) {
 		var client mock.FlapsClient
 		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
 			return []*fly.Machine{
-				{ID: "1", State: fly.MachineStateStarted},
-				{ID: "2", State: fly.MachineStateStarted},
-				{ID: "3", State: fly.MachineStateStarted},
-				{ID: "4", State: fly.MachineStateStopped},
+				{ID: "1", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+				{ID: "4", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
 			}, nil
 		}
 		client.StopFunc = func(ctx context.Context, in fly.StopMachineInput, nonce string) error {
