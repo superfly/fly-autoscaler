@@ -94,6 +94,16 @@ func (r *Reconciler) CollectMetrics(ctx context.Context) error {
 	return nil
 }
 
+func reachbleMachines(machines []*fly.Machine) []*fly.Machine {
+	var reachable []*fly.Machine
+	for _, m := range machines {
+		if m.HostStatus == fly.HostStatusOk {
+			reachable = append(reachable, m)
+		}
+	}
+	return reachable
+}
+
 // Reconcile scales the number of machines up, if needed. Machines should shut
 // themselves down to scale down. Returns the number of started machines, if any.
 func (r *Reconciler) Reconcile(ctx context.Context) error {
@@ -117,10 +127,11 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	}
 
 	// Fetch list of running machines.
-	machines, err := r.listMachines(ctx)
+	all, err := r.listMachines(ctx)
 	if err != nil {
 		return fmt.Errorf("list machines: %w", err)
 	}
+	machines := reachbleMachines(all)
 	m := machinesByState(machines)
 
 	// Log out stats so we know exactly what the state of the world is.

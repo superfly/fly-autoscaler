@@ -50,10 +50,10 @@ func TestReconcilerPool_Run_SingleApp(t *testing.T) {
 
 	var mu sync.Mutex
 	machines := []*fly.Machine{
-		{ID: "1", State: fly.MachineStateStopped},
-		{ID: "2", State: fly.MachineStateStopped},
-		{ID: "3", State: fly.MachineStateStopped},
-		{ID: "4", State: fly.MachineStateStopped},
+		{ID: "1", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+		{ID: "2", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+		{ID: "3", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+		{ID: "4", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
 	}
 
 	machinesByID := make(map[string]*fly.Machine)
