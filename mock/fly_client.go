@@ -3,11 +3,8 @@ package mock
 import (
 	"context"
 
-	fas "github.com/superfly/fly-autoscaler"
 	"github.com/superfly/fly-go"
 )
-
-var _ fas.FlyClient = (*FlyClient)(nil)
 
 type FlyClient struct {
 	GetOrganizationBySlugFunc  func(ctx context.Context, slug string) (*fly.Organization, error)

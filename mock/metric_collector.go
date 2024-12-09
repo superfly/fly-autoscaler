@@ -2,11 +2,7 @@ package mock
 
 import (
 	"context"
-
-	fas "github.com/superfly/fly-autoscaler"
 )
-
-var _ fas.MetricCollector = (*MetricCollector)(nil)
 
 type MetricCollector struct {
 	name              string

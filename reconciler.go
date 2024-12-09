@@ -190,6 +190,12 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 
 	// Attempt to start as many machines as needed.
 	remaining := n
+
+	defer func() {
+		newlyCreatedN := n - remaining
+		logger.Info("bulk create completed", slog.Int("n", newlyCreatedN))
+	}()
+
 	for remaining > 0 {
 		// Cycle through possible regions, if set.
 		// Otherwise use the region of the source machine we're cloning.
@@ -200,8 +206,8 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 
 		machine, err := r.createMachine(ctx, config, region)
 		if err != nil {
-			logger.Error("cannot create machine, skipping", slog.Any("err", err))
-			continue
+			logger.Error("cannot create machine, skipping the rest", slog.Any("err", err))
+			return fmt.Errorf("failed to create a machine for %s: %w", region, err)
 		}
 
 		logger.Info("machine created",
@@ -210,9 +216,6 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 
 		remaining--
 	}
-
-	newlyCreatedN := n - remaining
-	logger.Info("bulk create completed", slog.Int("n", newlyCreatedN))
 
 	return nil
 }
