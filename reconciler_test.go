@@ -7,7 +7,9 @@ import (
 	"math"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/superfly/fly-autoscaler/mock"
 	"github.com/superfly/fly-go"
 )
@@ -493,4 +495,30 @@ func machineCountByState(a []*fly.Machine, state string) (n int) {
 		}
 	}
 	return n
+}
+
+func TestCreateN(t *testing.T) {
+	machineID := 0
+	r := NewReconciler()
+	r.Regions = []string{"iad", "fra", "nrt"}
+	r.Client = &mock.FlapsClient{
+		LaunchFunc: func(ctx context.Context, input fly.LaunchMachineInput) (*fly.Machine, error) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				time.Sleep(1 * time.Second)
+				machineID += 1
+				return &fly.Machine{ID: fmt.Sprintf("%d", machineID), State: fly.MachineStateCreated}, nil
+			}
+		},
+	}
+
+	ctx := context.Background()
+
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+
+	err := r.createN(ctx, nil, "", 10)
+	require.Error(t, err)
 }
