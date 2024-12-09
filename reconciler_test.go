@@ -1,4 +1,4 @@
-package fas_test
+package fas
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"os"
 	"testing"
 
-	fas "github.com/superfly/fly-autoscaler"
 	"github.com/superfly/fly-autoscaler/mock"
 	"github.com/superfly/fly-go"
 )
@@ -21,7 +20,7 @@ func init() {
 
 func TestReconciler_Value(t *testing.T) {
 	t.Run("SetValue", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.SetValue("foo", 100)
 		if v, ok := r.Value("foo"); !ok {
 			t.Fatal("expected value")
@@ -31,7 +30,7 @@ func TestReconciler_Value(t *testing.T) {
 	})
 
 	t.Run("NoValue", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		if _, ok := r.Value("foo"); ok {
 			t.Fatal("expected no value")
 		}
@@ -40,7 +39,7 @@ func TestReconciler_Value(t *testing.T) {
 
 func TestReconciler_MinStartedMachineN(t *testing.T) {
 	t.Run("Constant", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = "1"
 		if v, ok, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
@@ -52,7 +51,7 @@ func TestReconciler_MinStartedMachineN(t *testing.T) {
 	})
 
 	t.Run("Round", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = "2.6"
 		if v, ok, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
@@ -64,7 +63,7 @@ func TestReconciler_MinStartedMachineN(t *testing.T) {
 	})
 
 	t.Run("Var", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = "x + y + 2"
 		r.SetValue("x", 4)
 		r.SetValue("y", 7)
@@ -78,7 +77,7 @@ func TestReconciler_MinStartedMachineN(t *testing.T) {
 	})
 
 	t.Run("Min", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = "min(x, y)"
 		r.SetValue("x", 4)
 		r.SetValue("y", 7)
@@ -92,7 +91,7 @@ func TestReconciler_MinStartedMachineN(t *testing.T) {
 	})
 
 	t.Run("Max", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = "max(x, y)"
 		r.SetValue("x", 4)
 		r.SetValue("y", 7)
@@ -106,7 +105,7 @@ func TestReconciler_MinStartedMachineN(t *testing.T) {
 	})
 
 	t.Run("Neg", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = "-2"
 		if v, ok, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
@@ -118,7 +117,7 @@ func TestReconciler_MinStartedMachineN(t *testing.T) {
 	})
 
 	t.Run("Blank", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = ""
 		if v, ok, err := r.CalcMinStartedMachineN(); err != nil {
 			t.Fatal(err)
@@ -130,18 +129,18 @@ func TestReconciler_MinStartedMachineN(t *testing.T) {
 	})
 
 	t.Run("NaN", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = "x + 1"
 		r.SetValue("x", math.NaN())
-		if _, _, err := r.CalcMinStartedMachineN(); err == nil || err != fas.ErrExprNaN {
+		if _, _, err := r.CalcMinStartedMachineN(); err == nil || err != ErrExprNaN {
 			t.Fatal(err)
 		}
 	})
 
 	t.Run("Inf", func(t *testing.T) {
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.MinStartedMachineN = "1 / 0"
-		if _, _, err := r.CalcMinStartedMachineN(); err == nil || err != fas.ErrExprInf {
+		if _, _, err := r.CalcMinStartedMachineN(); err == nil || err != ErrExprInf {
 			t.Fatal(err)
 		}
 	})
@@ -162,7 +161,7 @@ func TestReconciler_Scale_NoScale(t *testing.T) {
 		return &fly.MachineStartResponse{}, nil
 	}
 
-	r := fas.NewReconciler()
+	r := NewReconciler()
 	r.Client = &client
 	r.MinStartedMachineN = "1"
 	r.MaxStartedMachineN = "2"
@@ -225,7 +224,7 @@ func TestReconciler_Scale_Create(t *testing.T) {
 			}
 		}
 
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.Client = &client
 		r.MinCreatedMachineN, r.MaxCreatedMachineN = "4", "4"
 		if err := r.Reconcile(context.Background()); err != nil {
@@ -252,7 +251,7 @@ func TestReconciler_Scale_Create(t *testing.T) {
 			return nil, fmt.Errorf("unexpected launch invocation")
 		}
 
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.Client = &client
 		r.MinCreatedMachineN = "1"
 		if err := r.Reconcile(context.Background()); err == nil || err.Error() != `no machine available to clone for scale up` {
@@ -285,7 +284,7 @@ func TestReconciler_Scale_Destroy(t *testing.T) {
 			return nil
 		}
 
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.Client = &client
 		r.MinCreatedMachineN, r.MaxCreatedMachineN = "2", "2"
 		if err := r.Reconcile(context.Background()); err != nil {
@@ -317,7 +316,7 @@ func TestReconciler_Scale_Destroy(t *testing.T) {
 			return nil
 		}
 
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.Client = &client
 		r.MaxCreatedMachineN = "0"
 		if err := r.Reconcile(context.Background()); err != nil {
@@ -354,7 +353,7 @@ func TestReconciler_Scale_Start(t *testing.T) {
 			return &fly.MachineStartResponse{}, nil
 		}
 
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.Client = &client
 		r.MinStartedMachineN = "foo + 2"
 		r.MaxStartedMachineN = r.MinStartedMachineN
@@ -398,7 +397,7 @@ func TestReconciler_Scale_Start(t *testing.T) {
 			return &fly.MachineStartResponse{}, nil
 		}
 
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.Client = &client
 		r.MinStartedMachineN = "2"
 		r.MaxStartedMachineN = r.MinStartedMachineN
@@ -438,7 +437,7 @@ func TestReconciler_Scale_Stop(t *testing.T) {
 			return nil
 		}
 
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.Client = &client
 		r.MinStartedMachineN = "1"
 		r.MaxStartedMachineN = "1"
@@ -473,7 +472,7 @@ func TestReconciler_Scale_Stop(t *testing.T) {
 			return nil
 		}
 
-		r := fas.NewReconciler()
+		r := NewReconciler()
 		r.Client = &client
 		r.MinStartedMachineN = "1"
 		r.MaxStartedMachineN = "1"

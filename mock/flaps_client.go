@@ -3,11 +3,8 @@ package mock
 import (
 	"context"
 
-	fas "github.com/superfly/fly-autoscaler"
 	"github.com/superfly/fly-go"
 )
-
-var _ fas.FlapsClient = (*FlapsClient)(nil)
 
 type FlapsClient struct {
 	ListFunc    func(ctx context.Context, state string) ([]*fly.Machine, error)

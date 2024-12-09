@@ -1,4 +1,4 @@
-package fas_test
+package fas
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	fas "github.com/superfly/fly-autoscaler"
 	"github.com/superfly/fly-autoscaler/mock"
 	fly "github.com/superfly/fly-go"
 )
@@ -27,7 +26,7 @@ func TestFormatWildcardAsRegexp(t *testing.T) {
 		{"my-[app]*", "^my-\\[app\\].*$"}, // escaped characters
 	} {
 		t.Run("", func(t *testing.T) {
-			if got, want := fas.FormatWildcardAsRegexp(tt.in), tt.out; got != want {
+			if got, want := FormatWildcardAsRegexp(tt.in), tt.out; got != want {
 				t.Fatalf("got %q, want %q", got, want)
 			}
 		})
@@ -37,7 +36,7 @@ func TestFormatWildcardAsRegexp(t *testing.T) {
 // Ensure prometheus registration does not blow up.
 func TestReconcilerPool_RegisterPromMetrics(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	fas.NewReconcilerPool(nil, 1).RegisterPromMetrics(reg)
+	NewReconcilerPool(nil, 1).RegisterPromMetrics(reg)
 	if _, err := reg.Gather(); err != nil {
 		t.Fatal(err)
 	}
@@ -117,19 +116,19 @@ func TestReconcilerPool_Run_SingleApp(t *testing.T) {
 		return float64(target.Load()), nil
 	}
 
-	p := fas.NewReconcilerPool(&flyClient, 1)
+	p := NewReconcilerPool(&flyClient, 1)
 	p.OrganizationSlug = "myorg"
 	p.AppName = "my-app-*"
 	p.ReconcileInterval = 100 * time.Millisecond
-	p.NewReconciler = func() *fas.Reconciler {
-		r := fas.NewReconciler()
+	p.NewReconciler = func() *Reconciler {
+		r := NewReconciler()
 		r.Client = &flapsClient
 		r.MinStartedMachineN = "target"
 		r.MaxStartedMachineN = r.MinStartedMachineN
-		r.Collectors = []fas.MetricCollector{collector}
+		r.Collectors = []MetricCollector{collector}
 		return r
 	}
-	p.NewFlapsClient = func(ctx context.Context, name string) (fas.FlapsClient, error) {
+	p.NewFlapsClient = func(ctx context.Context, name string) (FlapsClient, error) {
 		return &flapsClient, nil
 	}
 	if err := p.Open(); err != nil {
