@@ -71,6 +71,7 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	}
 	p.NewReconciler = func() *fas.Reconciler {
 		r := fas.NewReconciler()
+		r.ProcessGroup = c.Config.ProcessGroup
 		r.MinCreatedMachineN = minCreatedMachineN
 		r.MaxCreatedMachineN = maxCreatedMachineN
 		r.MinStartedMachineN = minStartedMachineN
@@ -85,6 +86,33 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 	p.ReconcileInterval = c.Config.Interval
 	p.ReconcileTimeout = c.Config.Timeout
 	p.AppListRefreshInterval = c.Config.AppListRefreshInterval
+
+	// Build process group configs for multi-group mode.
+	if len(c.Config.ProcessGroups) > 0 {
+		for _, pgConfig := range c.Config.ProcessGroups {
+			pgCollectors, err := pgConfig.NewMetricCollectors()
+			if err != nil {
+				return fmt.Errorf("process-group %q: cannot create metrics collectors: %w", pgConfig.Name, err)
+			}
+
+			initialState := pgConfig.InitialMachineState
+			if initialState == "" {
+				initialState = c.Config.InitialMachineState
+			}
+
+			p.ProcessGroups = append(p.ProcessGroups, &fas.ProcessGroupConfig{
+				Name:                pgConfig.Name,
+				MinCreatedMachineN:  pgConfig.GetMinCreatedMachineN(),
+				MaxCreatedMachineN:  pgConfig.GetMaxCreatedMachineN(),
+				MinStartedMachineN:  pgConfig.GetMinStartedMachineN(),
+				MaxStartedMachineN:  pgConfig.GetMaxStartedMachineN(),
+				InitialMachineState: initialState,
+				Regions:             pgConfig.Regions,
+				Collectors:          pgCollectors,
+			})
+		}
+	}
+
 	p.RegisterPromMetrics(prometheus.DefaultRegisterer)
 	c.pool = p
 

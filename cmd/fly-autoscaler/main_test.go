@@ -96,4 +96,72 @@ func TestConfig_Validate(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("ProcessGroups", func(t *testing.T) {
+		t.Run("MutuallyExclusiveWithTopLevel", func(t *testing.T) {
+			c := &main.Config{
+				AppName:         "myapp",
+				CreatedMachineN: "1",
+				ProcessGroups: []*main.ProcessGroupYAMLConfig{
+					{Name: "worker", CreatedMachineN: "1"},
+				},
+			}
+			if err := c.Validate(); err == nil || err.Error() != `cannot define both process-groups and top-level machine count expressions` {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+
+		t.Run("MutuallyExclusiveWithProcessGroup", func(t *testing.T) {
+			c := &main.Config{
+				AppName:      "myapp",
+				ProcessGroup: "web",
+				ProcessGroups: []*main.ProcessGroupYAMLConfig{
+					{Name: "worker", CreatedMachineN: "1"},
+				},
+			}
+			if err := c.Validate(); err == nil || err.Error() != `cannot define both process-group and process-groups` {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+
+		t.Run("RequiresName", func(t *testing.T) {
+			c := &main.Config{
+				AppName:         "myapp",
+				InitialMachineState: "started",
+				ProcessGroups: []*main.ProcessGroupYAMLConfig{
+					{CreatedMachineN: "1"},
+				},
+			}
+			if err := c.Validate(); err == nil || err.Error() != `process-groups[0]: name required` {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+
+		t.Run("RequiresMachineCount", func(t *testing.T) {
+			c := &main.Config{
+				AppName:         "myapp",
+				InitialMachineState: "started",
+				ProcessGroups: []*main.ProcessGroupYAMLConfig{
+					{Name: "worker"},
+				},
+			}
+			if err := c.Validate(); err == nil || err.Error() != `process-groups[0]: must define either created machine count or started machine count` {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+
+		t.Run("Valid", func(t *testing.T) {
+			c := &main.Config{
+				AppName:         "myapp",
+				InitialMachineState: "started",
+				ProcessGroups: []*main.ProcessGroupYAMLConfig{
+					{Name: "web", CreatedMachineN: "1"},
+					{Name: "worker", CreatedMachineN: "ceil(queue_depth / 10)"},
+				},
+			}
+			if err := c.Validate(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	})
 }

@@ -58,3 +58,35 @@ metric-collectors:
     cert-data: "-----BEGIN CERTIFICATE-----..."
     key-data: "-----BEGIN EC PRIVATE KEY-----..."
     query: 'WorkflowType="my_workflow_type"'
+
+# ---- Process Group Support ----
+#
+# To scale a single process group, set the process-group field (or use the
+# FAS_PROCESS_GROUP environment variable) alongside the top-level scaling
+# expressions above:
+#
+#   process-group: "worker"
+#
+# To scale multiple process groups independently within a single autoscaler
+# instance, use the process-groups list below instead of the top-level
+# created-machine-count / started-machine-count fields. These are mutually
+# exclusive — you cannot define both.
+#
+# process-groups:
+#   - name: "web"
+#     created-machine-count: "ceil(http_connections / 100)"
+#     metric-collectors:
+#       - type: "prometheus"
+#         metric-name: "http_connections"
+#         address: "https://api.fly.io/prometheus/MY_ORG"
+#         query: "sum(http_connections{app='$APP_NAME'})"
+#         token: "FlyV1 ..."
+#
+#   - name: "worker"
+#     created-machine-count: "ceil(queue_depth / 10)"
+#     metric-collectors:
+#       - type: "prometheus"
+#         metric-name: "queue_depth"
+#         address: "https://api.fly.io/prometheus/MY_ORG"
+#         query: "sum(queue_depth{app='$APP_NAME'})"
+#         token: "FlyV1 ..."
