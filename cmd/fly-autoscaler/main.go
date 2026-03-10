@@ -132,6 +132,13 @@ type Config struct {
 	APIToken               string        `yaml:"api-token"`
 	Verbose                bool          `yaml:"verbose"`
 
+	// Single process group filter. When set, only machines in this group are managed.
+	ProcessGroup string `yaml:"process-group"`
+
+	// Multiple process group configurations. Each group is reconciled independently
+	// with its own scaling expressions and metric collectors.
+	ProcessGroups []*ProcessGroupYAMLConfig `yaml:"process-groups"`
+
 	MetricCollectors []*MetricCollectorConfig `yaml:"metric-collectors"`
 }
 
@@ -156,6 +163,7 @@ func NewConfigFromEnv() (_ *Config, err error) {
 	c.MinStartedMachineN = os.Getenv("FAS_MIN_STARTED_MACHINE_COUNT")
 	c.MaxStartedMachineN = os.Getenv("FAS_MAX_STARTED_MACHINE_COUNT")
 	c.APIToken = os.Getenv("FAS_API_TOKEN")
+	c.ProcessGroup = os.Getenv("FAS_PROCESS_GROUP")
 
 	if s := os.Getenv("FAS_REGIONS"); s != "" {
 		c.Regions = strings.Split(s, ",")
@@ -263,14 +271,29 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("app name required")
 	}
 
-	if !c.IsCreatedMachineCountDefined() && !c.IsStartedMachineCountDefined() {
-		return fmt.Errorf("must define either created machine count or started machine count")
-	}
-	if err := c.validateCreatedMachineCount(); err != nil {
-		return err
-	}
-	if err := c.validateStartedMachineCount(); err != nil {
-		return err
+	if len(c.ProcessGroups) > 0 {
+		// Multi-group mode: top-level scaling expressions and process-group are mutually exclusive.
+		if c.IsCreatedMachineCountDefined() || c.IsStartedMachineCountDefined() {
+			return fmt.Errorf("cannot define both process-groups and top-level machine count expressions")
+		}
+		if c.ProcessGroup != "" {
+			return fmt.Errorf("cannot define both process-group and process-groups")
+		}
+		for i, pg := range c.ProcessGroups {
+			if err := pg.Validate(); err != nil {
+				return fmt.Errorf("process-groups[%d]: %w", i, err)
+			}
+		}
+	} else {
+		if !c.IsCreatedMachineCountDefined() && !c.IsStartedMachineCountDefined() {
+			return fmt.Errorf("must define either created machine count or started machine count")
+		}
+		if err := c.validateCreatedMachineCount(); err != nil {
+			return err
+		}
+		if err := c.validateStartedMachineCount(); err != nil {
+			return err
+		}
 	}
 
 	if !slices.Contains([]string{fly.MachineStateStarted, fly.MachineStateStopped}, c.InitialMachineState) {
@@ -456,4 +479,107 @@ func (c *MetricCollectorConfig) newTemporalMetricCollector() (*temporal.MetricCo
 		return nil, err
 	}
 	return collector, nil
+}
+
+type ProcessGroupYAMLConfig struct {
+	Name               string                  `yaml:"name"`
+	Regions            []string                `yaml:"regions"`
+	CreatedMachineN    string                  `yaml:"created-machine-count"`
+	MinCreatedMachineN string                  `yaml:"min-created-machine-count"`
+	MaxCreatedMachineN string                  `yaml:"max-created-machine-count"`
+	InitialMachineState string                 `yaml:"initial-machine-state"`
+	StartedMachineN    string                  `yaml:"started-machine-count"`
+	MinStartedMachineN string                  `yaml:"min-started-machine-count"`
+	MaxStartedMachineN string                  `yaml:"max-started-machine-count"`
+	MetricCollectors   []*MetricCollectorConfig `yaml:"metric-collectors"`
+}
+
+func (pg *ProcessGroupYAMLConfig) IsCreatedMachineCountDefined() bool {
+	return pg.CreatedMachineN != "" || pg.MinCreatedMachineN != "" || pg.MaxCreatedMachineN != ""
+}
+
+func (pg *ProcessGroupYAMLConfig) GetMinCreatedMachineN() string {
+	if v := pg.CreatedMachineN; v != "" {
+		return v
+	}
+	return pg.MinCreatedMachineN
+}
+
+func (pg *ProcessGroupYAMLConfig) GetMaxCreatedMachineN() string {
+	if v := pg.CreatedMachineN; v != "" {
+		return v
+	}
+	return pg.MaxCreatedMachineN
+}
+
+func (pg *ProcessGroupYAMLConfig) IsStartedMachineCountDefined() bool {
+	return pg.StartedMachineN != "" || pg.MinStartedMachineN != "" || pg.MaxStartedMachineN != ""
+}
+
+func (pg *ProcessGroupYAMLConfig) GetMinStartedMachineN() string {
+	if v := pg.StartedMachineN; v != "" {
+		return v
+	}
+	return pg.MinStartedMachineN
+}
+
+func (pg *ProcessGroupYAMLConfig) GetMaxStartedMachineN() string {
+	if v := pg.StartedMachineN; v != "" {
+		return v
+	}
+	return pg.MaxStartedMachineN
+}
+
+func (pg *ProcessGroupYAMLConfig) Validate() error {
+	if pg.Name == "" {
+		return fmt.Errorf("name required")
+	}
+
+	if !pg.IsCreatedMachineCountDefined() && !pg.IsStartedMachineCountDefined() {
+		return fmt.Errorf("must define either created machine count or started machine count")
+	}
+
+	if pg.CreatedMachineN != "" && (pg.MinCreatedMachineN != "" || pg.MaxCreatedMachineN != "") {
+		return fmt.Errorf("cannot define created machine count and min/max created machine count")
+	}
+	if pg.MinCreatedMachineN != "" && pg.MaxCreatedMachineN == "" {
+		return fmt.Errorf("max created machine count required if min created machine count is defined")
+	}
+	if pg.MinCreatedMachineN == "" && pg.MaxCreatedMachineN != "" {
+		return fmt.Errorf("min created machine count required if max created machine count is defined")
+	}
+
+	if pg.StartedMachineN != "" && (pg.MinStartedMachineN != "" || pg.MaxStartedMachineN != "") {
+		return fmt.Errorf("cannot define started machine count and min/max started machine count")
+	}
+	if pg.MinStartedMachineN != "" && pg.MaxStartedMachineN == "" {
+		return fmt.Errorf("max started machine count required if min started machine count is defined")
+	}
+	if pg.MinStartedMachineN == "" && pg.MaxStartedMachineN != "" {
+		return fmt.Errorf("min started machine count required if max started machine count is defined")
+	}
+
+	if pg.InitialMachineState != "" && !slices.Contains([]string{fly.MachineStateStarted, fly.MachineStateStopped}, pg.InitialMachineState) {
+		return fmt.Errorf("initial machine state must be either 'started' or 'stopped'")
+	}
+
+	for i, collectorConfig := range pg.MetricCollectors {
+		if err := collectorConfig.Validate(); err != nil {
+			return fmt.Errorf("metric-collectors[%d]: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+func (pg *ProcessGroupYAMLConfig) NewMetricCollectors() ([]fas.MetricCollector, error) {
+	var a []fas.MetricCollector
+	for i, collectorConfig := range pg.MetricCollectors {
+		collector, err := collectorConfig.NewMetricCollector()
+		if err != nil {
+			return nil, fmt.Errorf("metric collector[%d]: %w", i, err)
+		}
+		a = append(a, collector)
+	}
+	return a, nil
 }

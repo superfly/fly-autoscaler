@@ -24,6 +24,9 @@ type Reconciler struct {
 	// The name of the app currently being reconciled.
 	AppName string
 
+	// If set, only manage machines in this process group.
+	ProcessGroup string
+
 	// List of regions that machines can be created in.
 	// The reconciler uses a round-robin approach to choosing next region.
 	Regions []string
@@ -104,6 +107,19 @@ func reachbleMachines(machines []*fly.Machine) []*fly.Machine {
 	return reachable
 }
 
+func filterByProcessGroup(machines []*fly.Machine, group string) []*fly.Machine {
+	if group == "" {
+		return machines
+	}
+	var filtered []*fly.Machine
+	for _, m := range machines {
+		if m.HasProcessGroup(group) {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
 // Reconcile scales the number of machines up, if needed. Machines should shut
 // themselves down to scale down. Returns the number of started machines, if any.
 func (r *Reconciler) Reconcile(ctx context.Context) error {
@@ -132,11 +148,17 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("list machines: %w", err)
 	}
 	machines := reachbleMachines(all)
+	machines = filterByProcessGroup(machines, r.ProcessGroup)
 	m := machinesByState(machines)
 
 	// Log out stats so we know exactly what the state of the world is.
-	slog.Info("reconciling",
+	attrs := []any{
 		slog.String("app", r.AppName),
+	}
+	if r.ProcessGroup != "" {
+		attrs = append(attrs, slog.String("process_group", r.ProcessGroup))
+	}
+	attrs = append(attrs,
 		slog.Group("current",
 			slog.Int("started", len(m[fly.MachineStateStarted])),
 			slog.Int("stopped", len(m[fly.MachineStateStopped])),
@@ -152,6 +174,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			),
 		),
 	)
+	slog.Info("reconciling", attrs...)
 
 	// Determine if we need to create or destroy machines.
 	createdN := len(machines)

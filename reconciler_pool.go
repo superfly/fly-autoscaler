@@ -62,6 +62,9 @@ type ReconcilerPool struct {
 	// Called one or more times on Open().
 	NewReconciler func() *Reconciler
 
+	// Process group configurations. If set, each group is reconciled independently.
+	ProcessGroups []*ProcessGroupConfig
+
 	// Shared stats for all reconcilers.
 	Stats ReconcilerStats
 }
@@ -128,9 +131,21 @@ func (p *ReconcilerPool) Open() error {
 		if err != nil {
 			return fmt.Errorf("cannot initialize flaps client: %w", err)
 		}
-		p.apps.m[p.AppName] = appInfo{
-			name:   p.AppName,
-			client: client,
+
+		if len(p.ProcessGroups) > 0 {
+			for _, pg := range p.ProcessGroups {
+				p.apps.m[p.AppName+"/"+pg.Name] = appInfo{
+					name:         p.AppName,
+					processGroup: pg.Name,
+					client:       client,
+					pgConfig:     pg,
+				}
+			}
+		} else {
+			p.apps.m[p.AppName] = appInfo{
+				name:   p.AppName,
+				client: client,
+			}
 		}
 
 		p.wg.Add(1)
@@ -279,7 +294,23 @@ func (p *ReconcilerPool) monitorReconciler(ctx context.Context, r *Reconciler) {
 			defer cancel()
 
 			r.AppName = info.name
+			r.ProcessGroup = info.processGroup
 			r.Client = info.client
+
+			// Apply per-process-group config if set.
+			if info.pgConfig != nil {
+				r.MinCreatedMachineN = info.pgConfig.MinCreatedMachineN
+				r.MaxCreatedMachineN = info.pgConfig.MaxCreatedMachineN
+				r.MinStartedMachineN = info.pgConfig.MinStartedMachineN
+				r.MaxStartedMachineN = info.pgConfig.MaxStartedMachineN
+				r.Collectors = info.pgConfig.Collectors
+				if info.pgConfig.InitialMachineState != "" {
+					r.InitialMachineState = info.pgConfig.InitialMachineState
+				}
+				if len(info.pgConfig.Regions) > 0 {
+					r.Regions = info.pgConfig.Regions
+				}
+			}
 
 			if err := r.CollectMetrics(ctx); err != nil {
 				slog.Error("metrics collection failed",
@@ -388,8 +419,22 @@ func (p *ReconcilerPool) registerReconcileCount(reg prometheus.Registerer) {
 }
 
 type appInfo struct {
-	name   string
-	client FlapsClient
+	name         string
+	processGroup string
+	client       FlapsClient
+	pgConfig     *ProcessGroupConfig // nil when not using process groups
+}
+
+// ProcessGroupConfig defines scaling parameters for a single process group.
+type ProcessGroupConfig struct {
+	Name                string
+	MinCreatedMachineN  string
+	MaxCreatedMachineN  string
+	MinStartedMachineN  string
+	MaxStartedMachineN  string
+	InitialMachineState string
+	Regions             []string
+	Collectors          []MetricCollector
 }
 
 // FormatWildcardAsRegexp returns a regexp for a given wildcard expression.

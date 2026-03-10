@@ -495,3 +495,150 @@ func machineCountByState(a []*fly.Machine, state string) (n int) {
 	}
 	return n
 }
+
+// Ensure that when ProcessGroup is set, only machines in that group are counted.
+func TestReconciler_Scale_WithProcessGroup(t *testing.T) {
+	t.Run("OnlyScalesMatchingGroup", func(t *testing.T) {
+		var client mock.FlapsClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{
+					ID:     "web-1",
+					State:  fly.MachineStateStarted,
+					Region: "iad",
+					Config: &fly.MachineConfig{
+						Metadata: map[string]string{"fly_process_group": "web"},
+					},
+					HostStatus: fly.HostStatusOk,
+				},
+				{
+					ID:     "web-2",
+					State:  fly.MachineStateStarted,
+					Region: "iad",
+					Config: &fly.MachineConfig{
+						Metadata: map[string]string{"fly_process_group": "web"},
+					},
+					HostStatus: fly.HostStatusOk,
+				},
+				{
+					ID:     "worker-1",
+					State:  fly.MachineStateStarted,
+					Region: "iad",
+					Config: &fly.MachineConfig{
+						Metadata: map[string]string{"fly_process_group": "worker"},
+					},
+					HostStatus: fly.HostStatusOk,
+				},
+			}, nil
+		}
+		client.StopFunc = func(ctx context.Context, in fly.StopMachineInput, nonce string) error {
+			// Should only stop a "worker" machine, never "web"
+			if in.ID != "worker-1" {
+				t.Fatalf("unexpected stop for machine %q", in.ID)
+			}
+			return nil
+		}
+
+		// Scale workers down to 0 started — should only see 1 worker, stop it
+		r := fas.NewReconciler()
+		r.Client = &client
+		r.ProcessGroup = "worker"
+		r.MinStartedMachineN = "0"
+		r.MaxStartedMachineN = "0"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := r.Stats.MachineStopped.Load(), int64(1); got != want {
+			t.Fatalf("MachineStopped=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("CreateClonesFromSameGroup", func(t *testing.T) {
+		var invokeCreateN int
+		var client mock.FlapsClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{
+					ID:     "web-1",
+					State:  fly.MachineStateStarted,
+					Region: "iad",
+					Config: &fly.MachineConfig{
+						Metadata: map[string]string{"fly_process_group": "web"},
+					},
+					HostStatus: fly.HostStatusOk,
+				},
+				{
+					ID:     "worker-1",
+					State:  fly.MachineStateStarted,
+					Region: "iad",
+					Config: &fly.MachineConfig{
+						Metadata: map[string]string{"fly_process_group": "worker", "role": "bg"},
+					},
+					HostStatus: fly.HostStatusOk,
+				},
+			}, nil
+		}
+		client.LaunchFunc = func(ctx context.Context, input fly.LaunchMachineInput) (*fly.Machine, error) {
+			invokeCreateN++
+			// Should clone from worker-1, preserving its metadata
+			if got, want := input.Config.Metadata["fly_process_group"], "worker"; got != want {
+				t.Fatalf("cloned process_group=%v, want %v", got, want)
+			}
+			if got, want := input.Config.Metadata["role"], "bg"; got != want {
+				t.Fatalf("cloned role=%v, want %v", got, want)
+			}
+			return &fly.Machine{ID: "worker-2", Region: input.Region}, nil
+		}
+
+		// Scale workers to 2 created — currently 1 worker, should create 1 more
+		r := fas.NewReconciler()
+		r.Client = &client
+		r.ProcessGroup = "worker"
+		r.MinCreatedMachineN = "2"
+		r.MaxCreatedMachineN = "2"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := invokeCreateN, 1; got != want {
+			t.Fatalf("createN=%v, want %v", got, want)
+		}
+	})
+
+	t.Run("NoProcessGroupScalesAll", func(t *testing.T) {
+		var client mock.FlapsClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{
+					ID:     "1",
+					State:  fly.MachineStateStarted,
+					Region: "iad",
+					Config: &fly.MachineConfig{
+						Metadata: map[string]string{"fly_process_group": "web"},
+					},
+					HostStatus: fly.HostStatusOk,
+				},
+				{
+					ID:     "2",
+					State:  fly.MachineStateStarted,
+					Region: "iad",
+					Config: &fly.MachineConfig{
+						Metadata: map[string]string{"fly_process_group": "worker"},
+					},
+					HostStatus: fly.HostStatusOk,
+				},
+			}, nil
+		}
+
+		// Without process group, all 2 machines are counted
+		r := fas.NewReconciler()
+		r.Client = &client
+		r.MinStartedMachineN = "1"
+		r.MaxStartedMachineN = "2"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := r.Stats.NoScale.Load(), int64(1); got != want {
+			t.Fatalf("NoScale=%v, want %v", got, want)
+		}
+	})
+}
