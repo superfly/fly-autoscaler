@@ -268,34 +268,38 @@ func (p *ReconcilerPool) updateAppNameList(ctx context.Context) error {
 
 // monitorReconciler monitors the work queue and passes apps to the reconciler.
 func (p *ReconcilerPool) monitorReconciler(ctx context.Context, r *Reconciler) {
-	errReconciliationTimeout := fmt.Errorf("reconciliation timeout")
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case info := <-p.ch:
-			ctx, cancel := context.WithTimeoutCause(p.ctx, p.ReconcileTimeout, errReconciliationTimeout)
-			defer cancel()
-
-			r.AppName = info.name
-			r.Client = info.client
-
-			if err := r.CollectMetrics(ctx); err != nil {
-				slog.Error("metrics collection failed",
-					slog.String("app", info.name),
-					slog.Any("err", err))
-				continue
-			}
-
-			if err := r.Reconcile(ctx); err != nil {
-				slog.Error("reconciliation failed",
-					slog.String("app", info.name),
-					slog.Any("err", err))
-				continue
-			}
-
+			p.processWork(r, info)
 		}
+	}
+}
+
+// processWork handles a single reconciliation cycle for a given app.
+// Extracted from monitorReconciler so that defer cancel() runs after each iteration.
+func (p *ReconcilerPool) processWork(r *Reconciler, info appInfo) {
+	errReconciliationTimeout := fmt.Errorf("reconciliation timeout")
+	ctx, cancel := context.WithTimeoutCause(p.ctx, p.ReconcileTimeout, errReconciliationTimeout)
+	defer cancel()
+
+	r.AppName = info.name
+	r.Client = info.client
+
+	if err := r.CollectMetrics(ctx); err != nil {
+		slog.Error("metrics collection failed",
+			slog.String("app", info.name),
+			slog.Any("err", err))
+		return
+	}
+
+	if err := r.Reconcile(ctx); err != nil {
+		slog.Error("reconciliation failed",
+			slog.String("app", info.name),
+			slog.Any("err", err))
+		return
 	}
 }
 
