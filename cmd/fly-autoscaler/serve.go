@@ -77,6 +77,7 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) (err error) {
 		r.MaxStartedMachineN = maxStartedMachineN
 		r.InitialMachineState = c.Config.InitialMachineState
 		r.Regions = c.Config.Regions
+		r.ProcessGroup = c.Config.ProcessGroup
 		r.Collectors = collectors
 		return r
 	}

@@ -18,7 +18,7 @@ func ExpandMetricQuery(ctx context.Context, query, app string) string {
 		case "APP_NAME":
 			return app
 		default:
-			return ""
+			return os.Getenv(key)
 		}
 	})
 }

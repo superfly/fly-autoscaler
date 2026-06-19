@@ -18,6 +18,7 @@ const (
 	DefaultReconcileTimeout       = 30 * time.Second
 	DefaultReconcileInterval      = 15 * time.Second
 	DefaultAppListRefreshInterval = 60 * time.Second
+	DefaultProcessGroup           = "app"
 )
 
 // ReconcilerPool represents a set of reconcilers that act as a worker pool.
@@ -280,6 +281,21 @@ func (p *ReconcilerPool) monitorReconciler(ctx context.Context, r *Reconciler) {
 
 			r.AppName = info.name
 			r.Client = info.client
+
+			release, err := p.flyClient.GetAppCurrentReleaseMachines(ctx, info.name)
+			if err != nil {
+				slog.Error("get current release failed",
+					slog.String("app", info.name),
+					slog.Any("err", err))
+				continue
+			}
+
+			if release.Status == "running" {
+				slog.Warn("release in progress, skipping reconciliation",
+					slog.String("app", r.AppName),
+				)
+				continue
+			}
 
 			if err := r.CollectMetrics(ctx); err != nil {
 				slog.Error("metrics collection failed",

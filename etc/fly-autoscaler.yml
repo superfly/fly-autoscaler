@@ -6,7 +6,9 @@ app-name: "TARGET_APP_NAME"
 # 
 # If this is not specified, the autoscaler will choose a region based on the
 # regions that the app is currently running in.
-regions: ['iad', 'ord', 'sjc']
+regions: ["iad", "ord", "sjc"]
+
+process-group: "app"
 
 # This expression determines the number of machines to maintain in your app
 # after each reconciliation. If the number of machines drops below this
@@ -14,7 +16,7 @@ regions: ['iad', 'ord', 'sjc']
 # If the number of machines is above this threshold then some machines will be
 # destroyed.
 #
-# There always needs to be at least one machine in your application so the 
+# There always needs to be at least one machine in your application so the
 # autoscaler will never destroy your last machine, even if the threshold reaches
 # zero.
 # 
