@@ -5,9 +5,11 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/superfly/fly-autoscaler"
+	fas "github.com/superfly/fly-autoscaler"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 var _ fas.MetricCollector = (*MetricCollector)(nil)
@@ -25,6 +27,9 @@ type MetricCollector struct {
 	// Certificate & key data. Optional. Must be set before calling Open().
 	Cert []byte
 	Key  []byte
+
+	// APIKey is the API key to use for the Temporal server. Optional.
+	APIKey string
 
 	// Query string used to filter running workflows.
 	Query string
@@ -53,6 +58,28 @@ func (c *MetricCollector) Open() (err error) {
 			return err
 		}
 		opt.ConnectionOptions.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	}
+
+	if c.APIKey != "" {
+		opt.ConnectionOptions = client.ConnectionOptions{
+			TLS: &tls.Config{},
+			DialOptions: []grpc.DialOption{
+				grpc.WithUnaryInterceptor(
+					func(ctx context.Context, method string, req any, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+						return invoker(
+							metadata.AppendToOutgoingContext(ctx, "temporal-namespace", c.Namespace),
+							method,
+							req,
+							reply,
+							cc,
+							opts...,
+						)
+					},
+				),
+			},
+		}
+
+		opt.Credentials = client.NewAPIKeyStaticCredentials(c.APIKey)
 	}
 
 	c.client, err = client.Dial(opt)
