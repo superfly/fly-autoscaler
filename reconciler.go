@@ -194,8 +194,14 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 	logger.Info("begin bulk create")
 
 	// Attempt to start as many machines as needed.
-	remaining := n
-	for remaining > 0 {
+	var newlyCreatedN int
+	for remaining := n; remaining > 0; remaining-- {
+		// Stop if the reconciliation context has expired or was canceled.
+		if ctx.Err() != nil {
+			logger.Warn("context done, aborting bulk create", slog.Int("remaining", remaining))
+			break
+		}
+
 		// Cycle through possible regions, if set.
 		// Otherwise use the region of the source machine we're cloning.
 		region := r.NextRegion()
@@ -203,6 +209,8 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 			region = defaultRegion
 		}
 
+		// Don't retry a failed create so a persistent error can't loop forever.
+		// The next reconciliation will create any machines still missing.
 		machine, err := r.createMachine(ctx, config, region)
 		if err != nil {
 			logger.Error("cannot create machine, skipping", slog.Any("err", err))
@@ -213,10 +221,9 @@ func (r *Reconciler) createN(ctx context.Context, config *fly.MachineConfig, def
 			slog.String("id", machine.ID),
 			slog.String("region", machine.Region))
 
-		remaining--
+		newlyCreatedN++
 	}
 
-	newlyCreatedN := n - remaining
 	logger.Info("bulk create completed", slog.Int("n", newlyCreatedN))
 
 	return nil

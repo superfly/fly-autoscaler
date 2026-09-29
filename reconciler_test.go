@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	fas "github.com/superfly/fly-autoscaler"
 	"github.com/superfly/fly-autoscaler/mock"
@@ -238,6 +240,55 @@ func TestReconciler_Scale_Create(t *testing.T) {
 		} else if got, want := r.Stats.MachineCreated.Load(), int64(2); got != want {
 			t.Fatalf("MachineCreated=%v, want %v", got, want)
 		} else if got, want := r.Stats.MachineCreateFailed.Load(), int64(0); got != want {
+			t.Fatalf("MachineCreateFailed=%v, want %v", got, want)
+		}
+	})
+
+	// Ensure that a failing create does not retry the same slot forever.
+	t.Run("ErrLaunchFailed", func(t *testing.T) {
+		var invokeLaunch atomic.Int64
+		var client mock.FlapsClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{
+					ID:         "1",
+					State:      fly.MachineStateStarted,
+					Region:     "iad",
+					Config:     &fly.MachineConfig{},
+					HostStatus: fly.HostStatusOk,
+				},
+			}, nil
+		}
+		client.LaunchFunc = func(ctx context.Context, input fly.LaunchMachineInput) (*fly.Machine, error) {
+			if invokeLaunch.Add(1) > 100 {
+				// Stop the runaway loop so the test fails instead of hanging.
+				return nil, context.Canceled
+			}
+			return nil, fmt.Errorf("launch failed")
+		}
+
+		r := fas.NewReconciler()
+		r.Client = &client
+		r.MinCreatedMachineN, r.MaxCreatedMachineN = "3", "3"
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- r.Reconcile(ctx) }()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("reconcile did not return after create failures")
+		}
+
+		if got, want := invokeLaunch.Load(), int64(2); got != want {
+			t.Fatalf("launch=%v, want %v", got, want)
+		}
+		if got, want := r.Stats.MachineCreateFailed.Load(), int64(2); got != want {
 			t.Fatalf("MachineCreateFailed=%v, want %v", got, want)
 		}
 	})
