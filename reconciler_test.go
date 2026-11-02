@@ -259,6 +259,48 @@ func TestReconciler_Scale_Create(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	// Ensure that stopped machines are started before any machine is created,
+	// so a failing create cannot hold back existing capacity.
+	t.Run("StartBeforeCreate", func(t *testing.T) {
+		var invokeStartN, invokeCreateN int
+		var client mock.FlapsClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{ID: "1", State: fly.MachineStateStarted, Region: "iad", Config: &fly.MachineConfig{}, HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStopped, Region: "iad", Config: &fly.MachineConfig{}, HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStopped, Region: "iad", Config: &fly.MachineConfig{}, HostStatus: fly.HostStatusOk},
+			}, nil
+		}
+		client.StartFunc = func(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error) {
+			if invokeCreateN > 0 {
+				t.Fatalf("machine %q started after create was attempted", id)
+			}
+			invokeStartN++
+			return &fly.MachineStartResponse{}, nil
+		}
+		client.LaunchFunc = func(ctx context.Context, input fly.LaunchMachineInput) (*fly.Machine, error) {
+			invokeCreateN++
+			if invokeCreateN == 1 {
+				return nil, fmt.Errorf("Your organization has reached its machine limit")
+			}
+			return &fly.Machine{ID: fmt.Sprint(invokeCreateN + 3), Region: input.Region}, nil
+		}
+
+		r := fas.NewReconciler()
+		r.Client = &client
+		r.MinCreatedMachineN = "5"
+		r.MinStartedMachineN = "5"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		} else if got, want := invokeStartN, 2; got != want {
+			t.Fatalf("startN=%v, want %v", got, want)
+		} else if got, want := r.Stats.MachineCreateFailed.Load(), int64(1); got != want {
+			t.Fatalf("MachineCreateFailed=%v, want %v", got, want)
+		} else if got, want := r.Stats.MachineCreated.Load(), int64(2); got != want {
+			t.Fatalf("MachineCreated=%v, want %v", got, want)
+		}
+	})
 }
 
 // Ensure that machines will be destroyed when above the max count.
@@ -327,6 +369,64 @@ func TestReconciler_Scale_Destroy(t *testing.T) {
 			t.Fatalf("MachineDestroyed=%v, want %v", got, want)
 		} else if got, want := r.Stats.MachineDestroyFailed.Load(), int64(0); got != want {
 			t.Fatalf("MachineDestroyFailed=%v, want %v", got, want)
+		}
+	})
+
+	// Ensure started machines are never destroyed, even when there are not
+	// enough stopped machines to reach the max count.
+	t.Run("SkipStarted", func(t *testing.T) {
+		var client mock.FlapsClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{ID: "1", State: fly.MachineStateStarted, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStarted, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStopped, Region: "iad", HostStatus: fly.HostStatusOk},
+			}, nil
+		}
+		client.DestroyFunc = func(ctx context.Context, input fly.RemoveMachineInput, nonce string) error {
+			if input.ID != "3" {
+				t.Fatalf("unexpected destroy of machine %q", input.ID)
+			}
+			return nil
+		}
+
+		r := fas.NewReconciler()
+		r.Client = &client
+		r.MaxCreatedMachineN = "1"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		} else if got, want := r.Stats.MachineDestroyed.Load(), int64(1); got != want {
+			t.Fatalf("MachineDestroyed=%v, want %v", got, want)
+		}
+	})
+
+	// Ensure that when only started machines are above the max count, they are
+	// stopped rather than destroyed.
+	t.Run("StopInsteadOfDestroyStarted", func(t *testing.T) {
+		var client mock.FlapsClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{ID: "1", State: fly.MachineStateStarted, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "2", State: fly.MachineStateStarted, Region: "iad", HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStarted, Region: "iad", HostStatus: fly.HostStatusOk},
+			}, nil
+		}
+		client.DestroyFunc = func(ctx context.Context, input fly.RemoveMachineInput, nonce string) error {
+			t.Fatalf("unexpected destroy of machine %q", input.ID)
+			return nil
+		}
+		client.StopFunc = func(ctx context.Context, in fly.StopMachineInput, nonce string) error {
+			return nil
+		}
+
+		r := fas.NewReconciler()
+		r.Client = &client
+		r.MaxCreatedMachineN = "1"
+		r.MaxStartedMachineN = "1"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		} else if got, want := r.Stats.MachineStopped.Load(), int64(2); got != want {
+			t.Fatalf("MachineStopped=%v, want %v", got, want)
 		}
 	})
 }
@@ -412,6 +512,31 @@ func TestReconciler_Scale_Start(t *testing.T) {
 			t.Fatalf("MachineStarted=%v, want %v", got, want)
 		} else if got, want := r.Stats.MachineStartFailed.Load(), int64(1); got != want {
 			t.Fatalf("MachineStartFailed=%v, want %v", got, want)
+		}
+	})
+
+	// Ensure that machines that are already starting count toward the target.
+	t.Run("Starting", func(t *testing.T) {
+		var client mock.FlapsClient
+		client.ListFunc = func(ctx context.Context, state string) ([]*fly.Machine, error) {
+			return []*fly.Machine{
+				{ID: "1", State: fly.MachineStateStarted, HostStatus: fly.HostStatusOk},
+				{ID: "2", State: "starting", HostStatus: fly.HostStatusOk},
+				{ID: "3", State: fly.MachineStateStopped, HostStatus: fly.HostStatusOk},
+			}, nil
+		}
+		client.StartFunc = func(ctx context.Context, id, nonce string) (*fly.MachineStartResponse, error) {
+			t.Fatalf("unexpected start of machine %q", id)
+			return nil, nil
+		}
+
+		r := fas.NewReconciler()
+		r.Client = &client
+		r.MinStartedMachineN = "2"
+		if err := r.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		} else if got, want := r.Stats.NoScale.Load(), int64(1); got != want {
+			t.Fatalf("NoScale=%v, want %v", got, want)
 		}
 	})
 }
