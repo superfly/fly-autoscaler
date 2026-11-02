@@ -158,8 +158,23 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		),
 	)
 
-	// Determine if we need to create or destroy machines.
+	// Machines that are already starting count as started so that they are not
+	// started again on the next reconciliation.
 	createdN := len(filtered)
+	startedN := len(m[fly.MachineStateStarted]) + len(m[machineStateStarting])
+
+	// Start stopped machines before creating new ones so that a failing create,
+	// such as one blocked by an organization's machine limit, cannot prevent
+	// existing machines from starting.
+	var started bool
+	if hasMinStartedN && startedN < minStartedN {
+		if err := r.startN(ctx, m[fly.MachineStateStopped], minStartedN-startedN); err != nil {
+			return err
+		}
+		started = true
+	}
+
+	// Determine if we need to create or destroy machines.
 	if hasMinCreatedN && createdN < minCreatedN {
 		if len(filtered) == 0 {
 			return fmt.Errorf("no machine available to clone for scale up")
@@ -170,15 +185,19 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		config.Image = machine.FullImageRef()
 		return r.createN(ctx, filtered[0].Config, machine.Region, minCreatedN-createdN)
 	}
-	if hasMaxCreatedN && createdN > maxCreatedN {
-		return r.destroyN(ctx, m, createdN-maxCreatedN)
+	if started {
+		return nil
 	}
 
-	// Determine if we need to start/stop machines.
-	startedN := len(m[fly.MachineStateStarted])
-	if hasMinStartedN && startedN < minStartedN {
-		return r.startN(ctx, m[fly.MachineStateStopped], minStartedN-startedN)
+	// Only machines that are not running are destroyed. If there are none,
+	// fall through so excess started machines can be stopped first.
+	if hasMaxCreatedN && createdN > maxCreatedN {
+		if n := min(createdN-maxCreatedN, len(m[fly.MachineStateStopped])+len(m[fly.MachineStateCreated])); n > 0 {
+			return r.destroyN(ctx, m, n)
+		}
 	}
+
+	// Determine if we need to stop machines.
 	if hasMaxStartedN && startedN > maxStartedN {
 		return r.stopN(ctx, m[fly.MachineStateStarted], startedN-maxStartedN)
 	}
@@ -256,12 +275,11 @@ func (r *Reconciler) destroyN(ctx context.Context, machinesByState map[string][]
 }
 
 func chooseNextDestroyCandidate(m map[string][]*fly.Machine) *fly.Machine {
-	// Iterate over available machines in order of state. We want to try to
-	// destroy stopped machines before destroying started machines.
+	// Iterate over available machines in order of state. Started machines are
+	// never destroyed; they become candidates once they have stopped.
 	for _, state := range []string{
 		fly.MachineStateStopped,
 		fly.MachineStateCreated,
-		fly.MachineStateStarted,
 	} {
 		if len(m[state]) > 0 {
 			candidate := m[state][0]
@@ -467,6 +485,9 @@ func (r *Reconciler) evalInt(s string) (int, bool, error) {
 	}
 	return int(f), true, nil
 }
+
+// machineStateStarting is not defined by fly-go.
+const machineStateStarting = "starting"
 
 func machinesByState(a []*fly.Machine) map[string][]*fly.Machine {
 	m := make(map[string][]*fly.Machine)
